@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TravelPax.Workforce.Api/TravelPax.Workforce.Api.csproj" />
+    <Project Path="src/TravelPax.Workforce.Application/TravelPax.Workforce.Application.csproj" />
+    <Project Path="src/TravelPax.Workforce.Contracts/TravelPax.Workforce.Contracts.csproj" />
+    <Project Path="src/TravelPax.Workforce.Domain/TravelPax.Workforce.Domain.csproj" />
+    <Project Path="src/TravelPax.Workforce.Infrastructure/TravelPax.Workforce.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TravelPax.Workforce.UnitTests/TravelPax.Workforce.UnitTests.csproj" />
+  </Folder>
+</Solution>

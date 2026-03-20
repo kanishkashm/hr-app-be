@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: travelpax-workforce-postgres
+    environment:
+      POSTGRES_DB: travelpax_workforce_dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - travelpax-postgres-data:/var/lib/postgresql/data
+
+volumes:
+  travelpax-postgres-data:

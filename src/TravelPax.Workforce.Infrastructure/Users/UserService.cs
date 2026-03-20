@@ -1,0 +1,310 @@
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using TravelPax.Workforce.Application.Abstractions.CurrentUser;
+using TravelPax.Workforce.Application.Abstractions.Users;
+using TravelPax.Workforce.Contracts.Users;
+using TravelPax.Workforce.Domain.Entities;
+using TravelPax.Workforce.Infrastructure.Persistence;
+
+namespace TravelPax.Workforce.Infrastructure.Users;
+
+public sealed class UserService(
+    TravelPaxDbContext dbContext,
+    UserManager<AppUser> userManager,
+    RoleManager<AppRole> roleManager,
+    ICurrentUserService currentUserService) : IUserService
+{
+    public async Task<UserListResponse> GetUsersAsync(string? search, string? status, int page, int pageSize, CancellationToken cancellationToken = default)
+    {
+        var query = dbContext.Users.Include(x => x.Branch).AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim().ToUpperInvariant();
+            query = query.Where(x =>
+                x.NormalizedEmail!.Contains(term) ||
+                x.EmployeeId.ToUpper().Contains(term) ||
+                x.DisplayName.ToUpper().Contains(term));
+        }
+
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            query = query.Where(x => x.Status == status);
+        }
+
+        page = Math.Max(page, 1);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+
+        var totalCount = await query.CountAsync(cancellationToken);
+        var users = await query
+            .OrderBy(x => x.DisplayName)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        var items = new List<UserListItemResponse>(users.Count);
+        foreach (var user in users)
+        {
+            var roles = await userManager.GetRolesAsync(user);
+            items.Add(new UserListItemResponse(
+                user.Id,
+                user.EmployeeId,
+                user.DisplayName,
+                user.Email ?? string.Empty,
+                user.Department ?? string.Empty,
+                user.Designation ?? string.Empty,
+                user.EmploymentType ?? string.Empty,
+                user.Branch?.Name ?? string.Empty,
+                user.Status,
+                user.LastLoginAt,
+                roles.ToArray()));
+        }
+
+        return new UserListResponse(items, totalCount);
+    }
+
+    public async Task<UserDetailResponse> GetUserAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var user = await dbContext.Users.Include(x => x.Branch).FirstOrDefaultAsync(x => x.Id == userId, cancellationToken)
+            ?? throw new InvalidOperationException("User not found.");
+
+        return await MapDetailAsync(user);
+    }
+
+    public async Task<UserDetailResponse> CreateUserAsync(CreateUserRequest request, CancellationToken cancellationToken = default)
+    {
+        var actorId = currentUserService.UserId;
+        var user = new AppUser
+        {
+            Id = Guid.NewGuid(),
+            EmployeeId = request.EmployeeId.Trim(),
+            FirstName = request.FirstName.Trim(),
+            LastName = request.LastName.Trim(),
+            DisplayName = request.DisplayName.Trim(),
+            UserName = request.Email.Trim(),
+            Email = request.Email.Trim(),
+            NormalizedEmail = request.Email.Trim().ToUpperInvariant(),
+            NormalizedUserName = request.Email.Trim().ToUpperInvariant(),
+            MobileNumber = request.MobileNumber,
+            Department = request.Department,
+            Designation = request.Designation,
+            EmploymentType = request.EmploymentType,
+            DateJoined = request.DateJoined,
+            ReportingManagerId = request.ReportingManagerId,
+            BranchId = request.BranchId,
+            Status = request.Status,
+            EmailConfirmed = true,
+            LockoutEnabled = true,
+            CreatedBy = actorId
+        };
+
+        var result = await userManager.CreateAsync(user, request.Password);
+        if (!result.Succeeded)
+        {
+            throw new InvalidOperationException(string.Join(", ", result.Errors.Select(x => x.Description)));
+        }
+
+        await ApplyRolesAsync(user, request.RoleCodes);
+        dbContext.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = actorId,
+            Action = "UserCreated",
+            Module = "Users",
+            EntityName = nameof(AppUser),
+            EntityId = user.Id.ToString(),
+            NewValues = $"Email={user.Email};Status={user.Status};Roles={string.Join(',', request.RoleCodes)}"
+        });
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return await GetUserAsync(user.Id, cancellationToken);
+    }
+
+    public async Task<UserDetailResponse> UpdateUserAsync(Guid userId, UpdateUserRequest request, CancellationToken cancellationToken = default)
+    {
+        var user = await dbContext.Users.Include(x => x.Branch).FirstOrDefaultAsync(x => x.Id == userId, cancellationToken)
+            ?? throw new InvalidOperationException("User not found.");
+
+        var oldValues = $"Email={user.Email};Status={user.Status};Department={user.Department};Designation={user.Designation}";
+
+        user.FirstName = request.FirstName.Trim();
+        user.LastName = request.LastName.Trim();
+        user.DisplayName = request.DisplayName.Trim();
+        user.Email = request.Email.Trim();
+        user.UserName = request.Email.Trim();
+        user.NormalizedEmail = request.Email.Trim().ToUpperInvariant();
+        user.NormalizedUserName = request.Email.Trim().ToUpperInvariant();
+        user.MobileNumber = request.MobileNumber;
+        user.Department = request.Department;
+        user.Designation = request.Designation;
+        user.EmploymentType = request.EmploymentType;
+        user.DateJoined = request.DateJoined;
+        user.ReportingManagerId = request.ReportingManagerId;
+        user.BranchId = request.BranchId;
+        user.Status = request.Status;
+        user.UpdatedAt = DateTimeOffset.UtcNow;
+        user.UpdatedBy = currentUserService.UserId;
+
+        var updateResult = await userManager.UpdateAsync(user);
+        if (!updateResult.Succeeded)
+        {
+            throw new InvalidOperationException(string.Join(", ", updateResult.Errors.Select(x => x.Description)));
+        }
+
+        await ReplaceRolesAsync(user, request.RoleCodes);
+        dbContext.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = currentUserService.UserId,
+            Action = "UserUpdated",
+            Module = "Users",
+            EntityName = nameof(AppUser),
+            EntityId = user.Id.ToString(),
+            OldValues = oldValues,
+            NewValues = $"Email={user.Email};Status={user.Status};Department={user.Department};Designation={user.Designation};Roles={string.Join(',', request.RoleCodes)}"
+        });
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return await GetUserAsync(user.Id, cancellationToken);
+    }
+
+    public async Task<UserDetailResponse> UpdateUserStatusAsync(Guid userId, UpdateUserStatusRequest request, CancellationToken cancellationToken = default)
+    {
+        var user = await dbContext.Users.FirstOrDefaultAsync(x => x.Id == userId, cancellationToken)
+            ?? throw new InvalidOperationException("User not found.");
+
+        user.Status = request.Status;
+        user.LockoutEnd = request.Status == "Inactive" ? DateTimeOffset.MaxValue : null;
+        user.UpdatedAt = DateTimeOffset.UtcNow;
+        user.UpdatedBy = currentUserService.UserId;
+
+        await userManager.UpdateAsync(user);
+        dbContext.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = currentUserService.UserId,
+            Action = "UserStatusUpdated",
+            Module = "Users",
+            EntityName = nameof(AppUser),
+            EntityId = user.Id.ToString(),
+            NewValues = $"Status={user.Status}"
+        });
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return await GetUserAsync(user.Id, cancellationToken);
+    }
+
+    public async Task ResetPasswordAsync(Guid userId, ResetPasswordRequest request, CancellationToken cancellationToken = default)
+    {
+        var user = await dbContext.Users.FirstOrDefaultAsync(x => x.Id == userId, cancellationToken)
+            ?? throw new InvalidOperationException("User not found.");
+
+        var resetToken = await userManager.GeneratePasswordResetTokenAsync(user);
+        var result = await userManager.ResetPasswordAsync(user, resetToken, request.NewPassword);
+        if (!result.Succeeded)
+        {
+            throw new InvalidOperationException(string.Join(", ", result.Errors.Select(x => x.Description)));
+        }
+
+        dbContext.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = currentUserService.UserId,
+            Action = "UserPasswordReset",
+            Module = "Users",
+            EntityName = nameof(AppUser),
+            EntityId = user.Id.ToString(),
+            NewValues = "Password reset by admin"
+        });
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<UserDetailResponse> GetMyProfileAsync(CancellationToken cancellationToken = default)
+    {
+        if (currentUserService.UserId is null)
+        {
+            throw new UnauthorizedAccessException("User is not authenticated.");
+        }
+
+        return await GetUserAsync(currentUserService.UserId.Value, cancellationToken);
+    }
+
+    public async Task<UserDetailResponse> UpdateMyProfileAsync(UpdateMyProfileRequest request, CancellationToken cancellationToken = default)
+    {
+        if (currentUserService.UserId is null)
+        {
+            throw new UnauthorizedAccessException("User is not authenticated.");
+        }
+
+        var user = await dbContext.Users.Include(x => x.Branch).FirstAsync(x => x.Id == currentUserService.UserId.Value, cancellationToken);
+        user.DisplayName = request.DisplayName.Trim();
+        user.MobileNumber = request.MobileNumber;
+        user.UpdatedAt = DateTimeOffset.UtcNow;
+        user.UpdatedBy = user.Id;
+
+        await userManager.UpdateAsync(user);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return await MapDetailAsync(user);
+    }
+
+    public async Task<IReadOnlyCollection<RoleOptionResponse>> GetRoleOptionsAsync(CancellationToken cancellationToken = default)
+    {
+        return await roleManager.Roles
+            .OrderBy(x => x.Name)
+            .Select(x => new RoleOptionResponse(x.Code, x.Name!))
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyCollection<BranchOptionResponse>> GetBranchOptionsAsync(CancellationToken cancellationToken = default)
+    {
+        return await dbContext.OfficeBranches
+            .Where(x => x.IsActive)
+            .OrderBy(x => x.Name)
+            .Select(x => new BranchOptionResponse(x.Id, x.Code, x.Name))
+            .ToListAsync(cancellationToken);
+    }
+
+    private async Task<UserDetailResponse> MapDetailAsync(AppUser user)
+    {
+        var roles = await userManager.GetRolesAsync(user);
+        return new UserDetailResponse(
+            user.Id,
+            user.EmployeeId,
+            user.FirstName,
+            user.LastName,
+            user.DisplayName,
+            user.Email ?? string.Empty,
+            user.MobileNumber,
+            user.Department,
+            user.Designation,
+            user.EmploymentType,
+            user.DateJoined,
+            user.ReportingManagerId,
+            user.BranchId,
+            user.Branch?.Name,
+            user.Status,
+            user.LastLoginAt,
+            roles.ToArray());
+    }
+
+    private async Task ApplyRolesAsync(AppUser user, IReadOnlyCollection<string> roleCodes)
+    {
+        var validRoles = await roleManager.Roles
+            .Where(x => roleCodes.Contains(x.Code))
+            .Select(x => x.Name!)
+            .ToListAsync();
+
+        if (validRoles.Count > 0)
+        {
+            await userManager.AddToRolesAsync(user, validRoles);
+        }
+    }
+
+    private async Task ReplaceRolesAsync(AppUser user, IReadOnlyCollection<string> roleCodes)
+    {
+        var currentRoles = await userManager.GetRolesAsync(user);
+        if (currentRoles.Count > 0)
+        {
+            await userManager.RemoveFromRolesAsync(user, currentRoles);
+        }
+
+        await ApplyRolesAsync(user, roleCodes);
+    }
+}

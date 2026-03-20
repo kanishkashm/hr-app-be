@@ -1,0 +1,42 @@
+# Build outputs
+bin/
+obj/
+artifacts/
+publish/
+TestResults/
+
+# User-specific files
+*.user
+*.rsuser
+*.suo
+*.userosscache
+*.sln.docstates
+
+# IDE and tooling
+.vs/
+.vscode/
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+ReSharper*/
+_ReSharper*/
+
+# Logs
+logs/
+*.log
+
+# Local environment and secrets
+.env
+.env.*
+appsettings.Development.local.json
+appsettings.Local.json
+secrets.json
+
+# Database and temporary files
+*.db
+*.sqlite
+*.sqlite3
+
+# OS files
+.DS_Store
+Thumbs.db
