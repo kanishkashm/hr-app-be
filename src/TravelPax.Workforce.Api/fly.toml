@@ -7,6 +7,7 @@ app = 'hr-app-be'
 primary_region = 'bom'
 
 [build]
+  dockerfile = "src/TravelPax.Workforce.Api/Dockerfile"
 
 [http_service]
   internal_port = 8080
