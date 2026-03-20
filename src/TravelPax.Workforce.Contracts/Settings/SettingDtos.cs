@@ -58,3 +58,14 @@ public sealed record SettingsOverviewResponse(
     CompanySettingResponse Company,
     IReadOnlyCollection<BranchResponse> Branches,
     IReadOnlyCollection<AllowedNetworkResponse> Networks);
+
+public sealed record NetworkValidationCheckRequest(
+    Guid BranchId,
+    string IpAddress);
+
+public sealed record NetworkValidationCheckResponse(
+    Guid BranchId,
+    string IpAddress,
+    string Status,
+    string? MatchedRuleName,
+    string? MatchedRuleIpOrCidr);

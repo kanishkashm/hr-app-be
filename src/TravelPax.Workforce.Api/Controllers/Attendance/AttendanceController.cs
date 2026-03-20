@@ -103,4 +103,23 @@ public sealed class AttendanceController(IAttendanceService attendanceService) :
             return BadRequest(new { message = exception.Message });
         }
     }
+
+    [HttpPatch("me/{attendanceId:guid}/correct")]
+    [ProducesResponseType(typeof(AttendanceRecordResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> SelfCorrectAttendance(
+        Guid attendanceId,
+        [FromBody] AttendanceCorrectionRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await attendanceService.SelfCorrectAttendanceAsync(attendanceId, request, cancellationToken);
+            return Ok(response);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+    }
 }

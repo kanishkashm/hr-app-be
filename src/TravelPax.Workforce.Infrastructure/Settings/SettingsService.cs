@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using TravelPax.Workforce.Application.Abstractions.CurrentUser;
+using TravelPax.Workforce.Application.Abstractions.Networking;
 using TravelPax.Workforce.Application.Abstractions.Settings;
 using TravelPax.Workforce.Contracts.Settings;
 using TravelPax.Workforce.Domain.Entities;
@@ -9,7 +10,8 @@ namespace TravelPax.Workforce.Infrastructure.Settings;
 
 public sealed class SettingsService(
     TravelPaxDbContext dbContext,
-    ICurrentUserService currentUserService) : ISettingsService
+    ICurrentUserService currentUserService,
+    INetworkValidationService networkValidationService) : ISettingsService
 {
     public async Task<SettingsOverviewResponse> GetOverviewAsync(CancellationToken cancellationToken = default)
     {
@@ -199,6 +201,30 @@ public sealed class SettingsService(
 
         await dbContext.SaveChangesAsync(cancellationToken);
         return MapNetwork(network);
+    }
+
+    public async Task<NetworkValidationCheckResponse> TestNetworkAsync(NetworkValidationCheckRequest request, CancellationToken cancellationToken = default)
+    {
+        var branch = await dbContext.OfficeBranches.FirstOrDefaultAsync(x => x.Id == request.BranchId, cancellationToken)
+            ?? throw new InvalidOperationException("Branch not found.");
+        var ipAddress = request.IpAddress?.Trim();
+
+        if (string.IsNullOrWhiteSpace(ipAddress))
+        {
+            throw new InvalidOperationException("IP address is required.");
+        }
+
+        var result = await networkValidationService.ValidateAsync(branch.Id, ipAddress, cancellationToken);
+        var matchedRule = result.MatchedRuleId is null
+            ? null
+            : await dbContext.AllowedNetworks.FirstOrDefaultAsync(x => x.Id == result.MatchedRuleId.Value, cancellationToken);
+
+        return new NetworkValidationCheckResponse(
+            branch.Id,
+            ipAddress,
+            result.Status,
+            matchedRule?.Name,
+            matchedRule?.IpOrCidr);
     }
 
     private async Task<CompanySetting> GetCompanyEntityAsync(CancellationToken cancellationToken)

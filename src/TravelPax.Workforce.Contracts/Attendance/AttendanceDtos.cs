@@ -24,6 +24,7 @@ public sealed record AttendanceRecordResponse(
 public sealed record AttendanceTodayResponse(
     DateOnly Date,
     string Timezone,
+    string? DetectedIp,
     string Status,
     bool CanClockIn,
     bool CanClockOut,

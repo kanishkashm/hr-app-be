@@ -26,6 +26,7 @@ public sealed class AttendanceService(
         return new AttendanceTodayResponse(
             today,
             TimezoneId,
+            GetIpAddress(),
             record?.Status ?? "NotClockedIn",
             record is null,
             record is not null && record.ClockOutAt is null,
@@ -162,12 +163,8 @@ public sealed class AttendanceService(
 
         record.ClockInAt = request.ClockInAt?.ToUniversalTime();
         record.ClockOutAt = request.ClockOutAt?.ToUniversalTime();
-        record.Status = string.IsNullOrWhiteSpace(request.Status) ? "Corrected" : request.Status;
         record.Notes = request.Notes;
-        record.TotalWorkMinutes = record.ClockInAt is not null && record.ClockOutAt is not null
-            ? (int)Math.Round((record.ClockOutAt.Value - record.ClockInAt.Value).TotalMinutes, MidpointRounding.AwayFromZero)
-            : null;
-        record.IsLate = record.Status.Equals("Late", StringComparison.OrdinalIgnoreCase);
+        ApplyDerivedAttendanceState(record, request.Status, await GetCompanySettingsAsync(cancellationToken));
         record.UpdatedAt = DateTimeOffset.UtcNow;
         record.UpdatedBy = actor.Id;
 
@@ -175,6 +172,58 @@ public sealed class AttendanceService(
         {
             ActorUserId = actor.Id,
             Action = "AttendanceCorrected",
+            Module = "Attendance",
+            EntityName = nameof(AttendanceRecord),
+            EntityId = record.Id.ToString(),
+            OldValues = oldValues,
+            NewValues =
+                $"ClockInAt={record.ClockInAt:o};ClockOutAt={record.ClockOutAt:o};Status={record.Status};Minutes={record.TotalWorkMinutes};Notes={record.Notes};Reason={request.Reason}",
+            IpAddress = GetIpAddress(),
+            UserAgent = GetUserAgent()
+        });
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return MapRecord(record);
+    }
+
+    public async Task<AttendanceRecordResponse> SelfCorrectAttendanceAsync(Guid attendanceId, AttendanceCorrectionRequest request, CancellationToken cancellationToken = default)
+    {
+        var actor = await GetCurrentUserEntityAsync(cancellationToken);
+        var record = await dbContext.AttendanceRecords
+            .Include(x => x.User)
+            .Include(x => x.Branch)
+            .FirstOrDefaultAsync(x => x.Id == attendanceId && x.UserId == actor.Id, cancellationToken)
+            ?? throw new InvalidOperationException("Attendance record not found.");
+
+        if (request.ClockInAt is null)
+        {
+            throw new InvalidOperationException("Clock-in time is required.");
+        }
+
+        if (request.ClockOutAt is not null && request.ClockOutAt <= request.ClockInAt)
+        {
+            throw new InvalidOperationException("Clock-out must be after clock-in.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Reason))
+        {
+            throw new InvalidOperationException("Please provide a reason for the change.");
+        }
+
+        var oldValues =
+            $"ClockInAt={record.ClockInAt:o};ClockOutAt={record.ClockOutAt:o};Status={record.Status};Minutes={record.TotalWorkMinutes};Notes={record.Notes}";
+
+        record.ClockInAt = request.ClockInAt.Value.ToUniversalTime();
+        record.ClockOutAt = request.ClockOutAt?.ToUniversalTime();
+        record.Notes = request.Notes;
+        ApplyDerivedAttendanceState(record, null, await GetCompanySettingsAsync(cancellationToken));
+        record.UpdatedAt = DateTimeOffset.UtcNow;
+        record.UpdatedBy = actor.Id;
+
+        dbContext.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = actor.Id,
+            Action = "AttendanceSelfCorrected",
             Module = "Attendance",
             EntityName = nameof(AttendanceRecord),
             EntityId = record.Id.ToString(),
@@ -266,6 +315,50 @@ public sealed class AttendanceService(
             .AddMinutes(settings.LateGraceMinutes);
 
         return localNow <= scheduled ? 0 : (int)Math.Round((localNow - scheduled).TotalMinutes, MidpointRounding.AwayFromZero);
+    }
+
+    private async Task<CompanySetting> GetCompanySettingsAsync(CancellationToken cancellationToken)
+    {
+        return await dbContext.CompanySettings.OrderBy(x => x.CreatedAt).FirstAsync(cancellationToken);
+    }
+
+    private static void ApplyDerivedAttendanceState(AttendanceRecord record, string? requestedStatus, CompanySetting settings)
+    {
+        record.TotalWorkMinutes = record.ClockInAt is not null && record.ClockOutAt is not null
+            ? (int)Math.Round((record.ClockOutAt.Value - record.ClockInAt.Value).TotalMinutes, MidpointRounding.AwayFromZero)
+            : null;
+
+        var lateMinutes = record.ClockInAt is not null
+            ? CalculateLateMinutesForInstant(record.ClockInAt.Value, settings)
+            : 0;
+
+        record.IsLate = lateMinutes > 0;
+        record.LateMinutes = lateMinutes > 0 ? lateMinutes : null;
+
+        if (!string.IsNullOrWhiteSpace(requestedStatus))
+        {
+            record.Status = requestedStatus;
+            return;
+        }
+
+        record.Status = record.ClockOutAt is null
+            ? "PendingClockOut"
+            : record.IsLate ? "Late" : "Present";
+    }
+
+    private static int CalculateLateMinutesForInstant(DateTimeOffset instant, CompanySetting settings)
+    {
+        var localTime = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(instant, TimezoneId);
+        var scheduled = new DateTimeOffset(
+            localTime.Year,
+            localTime.Month,
+            localTime.Day,
+            settings.WorkingDayStartTime.Hour,
+            settings.WorkingDayStartTime.Minute,
+            0,
+            localTime.Offset).AddMinutes(settings.LateGraceMinutes);
+
+        return localTime <= scheduled ? 0 : (int)Math.Round((localTime - scheduled).TotalMinutes, MidpointRounding.AwayFromZero);
     }
 
     private static DateOnly GetBusinessDate() => DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTime.UtcNow, TimezoneId));

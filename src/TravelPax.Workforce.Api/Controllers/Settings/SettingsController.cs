@@ -57,4 +57,20 @@ public sealed class SettingsController(ISettingsService settingsService) : Contr
         var response = await settingsService.UpdateAllowedNetworkAsync(networkId, request, cancellationToken);
         return Ok(response);
     }
+
+    [HttpPost("allowed-networks/test")]
+    [ProducesResponseType(typeof(NetworkValidationCheckResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> TestAllowedNetwork([FromBody] NetworkValidationCheckRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await settingsService.TestNetworkAsync(request, cancellationToken);
+            return Ok(response);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+    }
 }

@@ -9,6 +9,7 @@ public interface IAttendanceService
     Task<AttendanceRecordResponse> ClockOutAsync(ClockAttendanceRequest request, CancellationToken cancellationToken = default);
     Task<IReadOnlyCollection<AttendanceRecordResponse>> GetMyHistoryAsync(int take, CancellationToken cancellationToken = default);
     Task<AttendanceRecordResponse> CorrectAttendanceAsync(Guid attendanceId, AttendanceCorrectionRequest request, CancellationToken cancellationToken = default);
+    Task<AttendanceRecordResponse> SelfCorrectAttendanceAsync(Guid attendanceId, AttendanceCorrectionRequest request, CancellationToken cancellationToken = default);
     Task<AttendanceListResponse> GetAttendanceAsync(
         DateOnly? fromDate,
         DateOnly? toDate,
