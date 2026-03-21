@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelPax.Workforce.Application.Abstractions.Users;
 using TravelPax.Workforce.Contracts.Users;
+using TravelPax.Workforce.Domain.Constants;
 
 namespace TravelPax.Workforce.Api.Controllers.Users;
 
@@ -11,6 +12,7 @@ namespace TravelPax.Workforce.Api.Controllers.Users;
 public sealed class UsersController(IUserService userService) : ControllerBase
 {
     [HttpGet]
+    [Authorize(Policy = PermissionCodes.UsersView)]
     [ProducesResponseType(typeof(UserListResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetUsers(
         [FromQuery] string? search,
@@ -24,6 +26,7 @@ public sealed class UsersController(IUserService userService) : ControllerBase
     }
 
     [HttpGet("{userId:guid}")]
+    [Authorize(Policy = PermissionCodes.UsersView)]
     [ProducesResponseType(typeof(UserDetailResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetUser(Guid userId, CancellationToken cancellationToken)
     {
@@ -32,6 +35,7 @@ public sealed class UsersController(IUserService userService) : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = PermissionCodes.UsersCreate)]
     [ProducesResponseType(typeof(UserDetailResponse), StatusCodes.Status201Created)]
     public async Task<IActionResult> CreateUser([FromBody] CreateUserRequest request, CancellationToken cancellationToken)
     {
@@ -40,6 +44,7 @@ public sealed class UsersController(IUserService userService) : ControllerBase
     }
 
     [HttpPut("{userId:guid}")]
+    [Authorize(Policy = PermissionCodes.UsersEdit)]
     [ProducesResponseType(typeof(UserDetailResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> UpdateUser(Guid userId, [FromBody] UpdateUserRequest request, CancellationToken cancellationToken)
     {
@@ -48,6 +53,7 @@ public sealed class UsersController(IUserService userService) : ControllerBase
     }
 
     [HttpPatch("{userId:guid}/status")]
+    [Authorize(Policy = PermissionCodes.UsersEdit)]
     [ProducesResponseType(typeof(UserDetailResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> UpdateStatus(Guid userId, [FromBody] UpdateUserStatusRequest request, CancellationToken cancellationToken)
     {
@@ -56,6 +62,7 @@ public sealed class UsersController(IUserService userService) : ControllerBase
     }
 
     [HttpPost("{userId:guid}/reset-password")]
+    [Authorize(Policy = PermissionCodes.UsersEdit)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<IActionResult> ResetPassword(Guid userId, [FromBody] ResetPasswordRequest request, CancellationToken cancellationToken)
     {
@@ -80,6 +87,7 @@ public sealed class UsersController(IUserService userService) : ControllerBase
     }
 
     [HttpGet("meta/roles")]
+    [Authorize(Policy = PermissionCodes.UsersView)]
     [ProducesResponseType(typeof(IReadOnlyCollection<RoleOptionResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetRoles(CancellationToken cancellationToken)
     {
@@ -88,6 +96,7 @@ public sealed class UsersController(IUserService userService) : ControllerBase
     }
 
     [HttpGet("meta/branches")]
+    [Authorize(Policy = PermissionCodes.UsersView)]
     [ProducesResponseType(typeof(IReadOnlyCollection<BranchOptionResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetBranches(CancellationToken cancellationToken)
     {

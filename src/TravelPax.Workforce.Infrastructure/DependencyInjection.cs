@@ -13,6 +13,7 @@ using TravelPax.Workforce.Application.Abstractions.Networking;
 using TravelPax.Workforce.Application.Abstractions.Roles;
 using TravelPax.Workforce.Application.Abstractions.Settings;
 using TravelPax.Workforce.Application.Abstractions.Users;
+using TravelPax.Workforce.Application.Abstractions.Reports;
 using TravelPax.Workforce.Infrastructure.Attendance;
 using TravelPax.Workforce.Infrastructure.Audit;
 using TravelPax.Workforce.Domain.Entities;
@@ -23,6 +24,8 @@ using TravelPax.Workforce.Infrastructure.Persistence.Seed;
 using TravelPax.Workforce.Infrastructure.Roles;
 using TravelPax.Workforce.Infrastructure.Settings;
 using TravelPax.Workforce.Infrastructure.Users;
+using TravelPax.Workforce.Domain.Constants;
+using TravelPax.Workforce.Infrastructure.Reports;
 
 namespace TravelPax.Workforce.Infrastructure;
 
@@ -40,6 +43,7 @@ public static class DependencyInjection
         services.AddScoped<IRoleService, RoleService>();
         services.AddScoped<ISettingsService, SettingsService>();
         services.AddScoped<IUserService, UserService>();
+        services.AddScoped<IReportService, ReportService>();
         services.AddSingleton<IJwtTokenGenerator, JwtTokenGenerator>();
         services.AddScoped<IdentitySeeder>();
 
@@ -85,7 +89,14 @@ public static class DependencyInjection
             };
         });
 
-        services.AddAuthorization();
+        services.AddAuthorization(options =>
+        {
+            foreach (var permission in PermissionCodes.All)
+            {
+                options.AddPolicy(permission, policy =>
+                    policy.RequireClaim("permission", permission));
+            }
+        });
         return services;
     }
 }

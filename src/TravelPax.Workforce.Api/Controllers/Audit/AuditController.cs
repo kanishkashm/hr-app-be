@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelPax.Workforce.Application.Abstractions.Audit;
 using TravelPax.Workforce.Contracts.Audit;
+using TravelPax.Workforce.Domain.Constants;
 
 namespace TravelPax.Workforce.Api.Controllers.Audit;
 
@@ -11,6 +12,7 @@ namespace TravelPax.Workforce.Api.Controllers.Audit;
 public sealed class AuditController(IAuditService auditService) : ControllerBase
 {
     [HttpGet("logs")]
+    [Authorize(Policy = PermissionCodes.AuditView)]
     [ProducesResponseType(typeof(IReadOnlyCollection<AuditLogResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAuditLogs([FromQuery] int take = 100, CancellationToken cancellationToken = default)
     {
@@ -19,6 +21,7 @@ public sealed class AuditController(IAuditService auditService) : ControllerBase
     }
 
     [HttpGet("login-attempts")]
+    [Authorize(Policy = PermissionCodes.AuditView)]
     [ProducesResponseType(typeof(IReadOnlyCollection<LoginAuditLogResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetLoginAuditLogs([FromQuery] int take = 100, CancellationToken cancellationToken = default)
     {

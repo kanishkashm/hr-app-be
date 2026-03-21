@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelPax.Workforce.Application.Abstractions.Roles;
 using TravelPax.Workforce.Contracts.Roles;
+using TravelPax.Workforce.Domain.Constants;
 
 namespace TravelPax.Workforce.Api.Controllers.Roles;
 
@@ -11,6 +12,7 @@ namespace TravelPax.Workforce.Api.Controllers.Roles;
 public sealed class RolesController(IRoleService roleService) : ControllerBase
 {
     [HttpGet]
+    [Authorize(Policy = PermissionCodes.RolesView)]
     [ProducesResponseType(typeof(RoleListResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetRoles(CancellationToken cancellationToken)
     {
@@ -19,6 +21,7 @@ public sealed class RolesController(IRoleService roleService) : ControllerBase
     }
 
     [HttpGet("{roleId:guid}")]
+    [Authorize(Policy = PermissionCodes.RolesView)]
     [ProducesResponseType(typeof(RoleResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetRole(Guid roleId, CancellationToken cancellationToken)
     {
@@ -27,6 +30,7 @@ public sealed class RolesController(IRoleService roleService) : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Policy = PermissionCodes.RolesManage)]
     [ProducesResponseType(typeof(RoleResponse), StatusCodes.Status201Created)]
     public async Task<IActionResult> CreateRole([FromBody] CreateRoleRequest request, CancellationToken cancellationToken)
     {
@@ -35,6 +39,7 @@ public sealed class RolesController(IRoleService roleService) : ControllerBase
     }
 
     [HttpPut("{roleId:guid}")]
+    [Authorize(Policy = PermissionCodes.RolesManage)]
     [ProducesResponseType(typeof(RoleResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> UpdateRole(Guid roleId, [FromBody] UpdateRoleRequest request, CancellationToken cancellationToken)
     {
@@ -43,6 +48,7 @@ public sealed class RolesController(IRoleService roleService) : ControllerBase
     }
 
     [HttpDelete("{roleId:guid}")]
+    [Authorize(Policy = PermissionCodes.RolesManage)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<IActionResult> DeleteRole(Guid roleId, CancellationToken cancellationToken)
     {
@@ -51,6 +57,7 @@ public sealed class RolesController(IRoleService roleService) : ControllerBase
     }
 
     [HttpGet("permission-matrix")]
+    [Authorize(Policy = PermissionCodes.RolesView)]
     [ProducesResponseType(typeof(IReadOnlyCollection<RolePermissionMatrixRow>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetPermissionMatrix(CancellationToken cancellationToken)
     {

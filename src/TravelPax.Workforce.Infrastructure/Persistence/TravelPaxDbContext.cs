@@ -15,6 +15,7 @@ public sealed class TravelPaxDbContext(DbContextOptions<TravelPaxDbContext> opti
     public DbSet<AllowedNetwork> AllowedNetworks => Set<AllowedNetwork>();
     public DbSet<CompanySetting> CompanySettings => Set<CompanySetting>();
     public DbSet<AttendanceRecord> AttendanceRecords => Set<AttendanceRecord>();
+    public DbSet<AttendanceCorrectionRequest> AttendanceCorrectionRequests => Set<AttendanceCorrectionRequest>();
     public DbSet<LoginAuditLog> LoginAuditLogs => Set<LoginAuditLog>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
@@ -93,6 +94,26 @@ public sealed class TravelPaxDbContext(DbContextOptions<TravelPaxDbContext> opti
             entity.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.SetNull);
             entity.HasOne(x => x.ClockInNetworkRule).WithMany().HasForeignKey(x => x.ClockInNetworkRuleId).OnDelete(DeleteBehavior.SetNull);
             entity.HasOne(x => x.ClockOutNetworkRule).WithMany().HasForeignKey(x => x.ClockOutNetworkRuleId).OnDelete(DeleteBehavior.SetNull);
+        });
+        builder.Entity<AttendanceCorrectionRequest>(entity =>
+        {
+            entity.ToTable("attendance_correction_requests");
+            entity.Property(x => x.Status).HasMaxLength(30);
+            entity.Property(x => x.Reason).HasMaxLength(1000);
+            entity.Property(x => x.ReviewerNote).HasMaxLength(1000);
+            entity.Property(x => x.ReviewIpAddress).HasMaxLength(80);
+            entity.HasOne(x => x.AttendanceRecord)
+                .WithMany()
+                .HasForeignKey(x => x.AttendanceRecordId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.RequestedByUser)
+                .WithMany()
+                .HasForeignKey(x => x.RequestedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.ReviewedByUser)
+                .WithMany()
+                .HasForeignKey(x => x.ReviewedByUserId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
         builder.Entity<LoginAuditLog>().ToTable("login_audit_logs");
         builder.Entity<AuditLog>().ToTable("audit_logs");

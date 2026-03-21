@@ -32,7 +32,7 @@ public sealed record AttendanceTodayResponse(
 
 public sealed record ClockAttendanceRequest(string? Notes);
 
-public sealed record AttendanceCorrectionRequest(
+public sealed record AttendanceCorrectionUpdateRequest(
     DateTimeOffset? ClockInAt,
     DateTimeOffset? ClockOutAt,
     string Status,
@@ -50,3 +50,63 @@ public sealed record AttendanceListResponse(
     IReadOnlyCollection<AttendanceRecordResponse> Items,
     int TotalCount,
     AttendanceSummaryResponse Summary);
+
+public sealed record AttendanceDetailResponse(
+    Guid Id,
+    Guid UserId,
+    string EmployeeName,
+    string EmployeeId,
+    string Department,
+    string Designation,
+    string Branch,
+    DateOnly AttendanceDate,
+    DateTimeOffset? ClockInAt,
+    DateTimeOffset? ClockOutAt,
+    int? TotalWorkMinutes,
+    string Status,
+    bool IsLate,
+    int? LateMinutes,
+    string? ClockInIp,
+    string? ClockOutIp,
+    string? ClockInUserAgent,
+    string? ClockOutUserAgent,
+    string? ClockInDeviceSummary,
+    string? ClockOutDeviceSummary,
+    string? ClockInNetworkValidation,
+    string? ClockOutNetworkValidation,
+    string? Notes,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? UpdatedAt,
+    Guid? CreatedBy,
+    Guid? UpdatedBy);
+
+public sealed record AttendanceCorrectionSubmissionRequest(
+    DateTimeOffset ClockInAt,
+    DateTimeOffset? ClockOutAt,
+    string? Notes,
+    string Reason);
+
+public sealed record AttendanceCorrectionReviewRequest(
+    bool Approve,
+    string? ReviewerNote);
+
+public sealed record AttendanceCorrectionRequestResponse(
+    Guid Id,
+    Guid AttendanceRecordId,
+    Guid RequestedByUserId,
+    string RequestedByEmployee,
+    DateOnly AttendanceDate,
+    DateTimeOffset RequestedClockInAt,
+    DateTimeOffset? RequestedClockOutAt,
+    string? RequestedNotes,
+    string Reason,
+    string Status,
+    DateTimeOffset CreatedAt,
+    Guid? ReviewedByUserId,
+    string? ReviewedByEmployee,
+    DateTimeOffset? ReviewedAt,
+    string? ReviewerNote);
+
+public sealed record AttendanceCorrectionRequestListResponse(
+    IReadOnlyCollection<AttendanceCorrectionRequestResponse> Items,
+    int TotalCount);

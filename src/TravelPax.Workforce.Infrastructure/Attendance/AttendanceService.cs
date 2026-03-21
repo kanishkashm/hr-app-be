@@ -144,7 +144,18 @@ public sealed class AttendanceService(
         return records.Select(MapRecord).ToArray();
     }
 
-    public async Task<AttendanceRecordResponse> CorrectAttendanceAsync(Guid attendanceId, AttendanceCorrectionRequest request, CancellationToken cancellationToken = default)
+    public async Task<AttendanceDetailResponse> GetAttendanceDetailAsync(Guid attendanceId, CancellationToken cancellationToken = default)
+    {
+        var record = await dbContext.AttendanceRecords
+            .Include(x => x.User)
+            .Include(x => x.Branch)
+            .FirstOrDefaultAsync(x => x.Id == attendanceId, cancellationToken)
+            ?? throw new InvalidOperationException("Attendance record not found.");
+
+        return MapDetail(record);
+    }
+
+    public async Task<AttendanceRecordResponse> CorrectAttendanceAsync(Guid attendanceId, AttendanceCorrectionUpdateRequest request, CancellationToken cancellationToken = default)
     {
         var actor = await GetCurrentUserEntityAsync(cancellationToken);
         var record = await dbContext.AttendanceRecords
@@ -186,7 +197,7 @@ public sealed class AttendanceService(
         return MapRecord(record);
     }
 
-    public async Task<AttendanceRecordResponse> SelfCorrectAttendanceAsync(Guid attendanceId, AttendanceCorrectionRequest request, CancellationToken cancellationToken = default)
+    public async Task<AttendanceRecordResponse> SelfCorrectAttendanceAsync(Guid attendanceId, AttendanceCorrectionUpdateRequest request, CancellationToken cancellationToken = default)
     {
         var actor = await GetCurrentUserEntityAsync(cancellationToken);
         var record = await dbContext.AttendanceRecords
@@ -236,6 +247,190 @@ public sealed class AttendanceService(
 
         await dbContext.SaveChangesAsync(cancellationToken);
         return MapRecord(record);
+    }
+
+    public async Task<AttendanceCorrectionRequestResponse> SubmitCorrectionRequestAsync(
+        Guid attendanceId,
+        AttendanceCorrectionSubmissionRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var actor = await GetCurrentUserEntityAsync(cancellationToken);
+        var record = await dbContext.AttendanceRecords
+            .Include(x => x.User)
+            .FirstOrDefaultAsync(x => x.Id == attendanceId && x.UserId == actor.Id, cancellationToken)
+            ?? throw new InvalidOperationException("Attendance record not found.");
+
+        if (string.IsNullOrWhiteSpace(request.Reason))
+        {
+            throw new InvalidOperationException("Please provide a reason.");
+        }
+
+        if (request.ClockOutAt is not null && request.ClockOutAt <= request.ClockInAt)
+        {
+            throw new InvalidOperationException("Clock-out must be after clock-in.");
+        }
+
+        var existingPending = await dbContext.AttendanceCorrectionRequests
+            .AnyAsync(x => x.AttendanceRecordId == attendanceId && x.Status == "Pending", cancellationToken);
+        if (existingPending)
+        {
+            throw new InvalidOperationException("A pending correction request already exists for this attendance record.");
+        }
+
+        var item = new AttendanceCorrectionRequest
+        {
+            Id = Guid.NewGuid(),
+            AttendanceRecordId = attendanceId,
+            RequestedByUserId = actor.Id,
+            RequestedClockInAt = request.ClockInAt.ToUniversalTime(),
+            RequestedClockOutAt = request.ClockOutAt?.ToUniversalTime(),
+            RequestedNotes = request.Notes,
+            Reason = request.Reason.Trim(),
+            Status = "Pending",
+            CreatedBy = actor.Id,
+            UpdatedBy = actor.Id
+        };
+
+        dbContext.AttendanceCorrectionRequests.Add(item);
+        dbContext.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = actor.Id,
+            Action = "AttendanceCorrectionRequested",
+            Module = "Attendance",
+            EntityName = nameof(AttendanceCorrectionRequest),
+            EntityId = item.Id.ToString(),
+            NewValues =
+                $"AttendanceId={attendanceId};ClockInAt={item.RequestedClockInAt:o};ClockOutAt={item.RequestedClockOutAt:o};Reason={item.Reason}",
+            IpAddress = GetIpAddress(),
+            UserAgent = GetUserAgent()
+        });
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await dbContext.Entry(item).Reference(x => x.RequestedByUser).LoadAsync(cancellationToken);
+        await dbContext.Entry(item).Reference(x => x.AttendanceRecord).LoadAsync(cancellationToken);
+
+        return MapCorrection(item);
+    }
+
+    public async Task<IReadOnlyCollection<AttendanceCorrectionRequestResponse>> GetMyCorrectionRequestsAsync(
+        int take,
+        CancellationToken cancellationToken = default)
+    {
+        var actor = await GetCurrentUserEntityAsync(cancellationToken);
+        var items = await dbContext.AttendanceCorrectionRequests
+            .Include(x => x.AttendanceRecord)
+            .Include(x => x.RequestedByUser)
+            .Include(x => x.ReviewedByUser)
+            .Where(x => x.RequestedByUserId == actor.Id)
+            .OrderByDescending(x => x.CreatedAt)
+            .Take(Math.Clamp(take, 1, 90))
+            .ToListAsync(cancellationToken);
+
+        return items.Select(MapCorrection).ToArray();
+    }
+
+    public async Task<AttendanceCorrectionRequestListResponse> GetCorrectionRequestsAsync(
+        string? status,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken = default)
+    {
+        page = Math.Max(page, 1);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+
+        var query = dbContext.AttendanceCorrectionRequests
+            .Include(x => x.AttendanceRecord)
+            .Include(x => x.RequestedByUser)
+            .Include(x => x.ReviewedByUser)
+            .AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            query = query.Where(x => x.Status == status);
+        }
+
+        var total = await query.CountAsync(cancellationToken);
+        var items = await query
+            .OrderByDescending(x => x.CreatedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        return new AttendanceCorrectionRequestListResponse(items.Select(MapCorrection).ToArray(), total);
+    }
+
+    public async Task<AttendanceCorrectionRequestResponse> ReviewCorrectionRequestAsync(
+        Guid requestId,
+        AttendanceCorrectionReviewRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var actor = await GetCurrentUserEntityAsync(cancellationToken);
+        var item = await dbContext.AttendanceCorrectionRequests
+            .Include(x => x.AttendanceRecord)
+            .Include(x => x.AttendanceRecord.User)
+            .Include(x => x.AttendanceRecord.Branch)
+            .Include(x => x.RequestedByUser)
+            .Include(x => x.ReviewedByUser)
+            .FirstOrDefaultAsync(x => x.Id == requestId, cancellationToken)
+            ?? throw new InvalidOperationException("Correction request not found.");
+
+        if (item.Status != "Pending")
+        {
+            throw new InvalidOperationException("This correction request is already reviewed.");
+        }
+
+        item.Status = request.Approve ? "Approved" : "Rejected";
+        item.ReviewedByUserId = actor.Id;
+        item.ReviewedAt = DateTimeOffset.UtcNow;
+        item.ReviewerNote = request.ReviewerNote;
+        item.ReviewIpAddress = GetIpAddress();
+        item.UpdatedBy = actor.Id;
+        item.UpdatedAt = DateTimeOffset.UtcNow;
+
+        if (request.Approve)
+        {
+            var record = item.AttendanceRecord;
+            var oldValues =
+                $"ClockInAt={record.ClockInAt:o};ClockOutAt={record.ClockOutAt:o};Status={record.Status};Minutes={record.TotalWorkMinutes};Notes={record.Notes}";
+
+            record.ClockInAt = item.RequestedClockInAt;
+            record.ClockOutAt = item.RequestedClockOutAt;
+            record.Notes = item.RequestedNotes;
+            ApplyDerivedAttendanceState(record, null, await GetCompanySettingsAsync(cancellationToken));
+            record.UpdatedAt = DateTimeOffset.UtcNow;
+            record.UpdatedBy = actor.Id;
+
+            dbContext.AuditLogs.Add(new AuditLog
+            {
+                ActorUserId = actor.Id,
+                Action = "AttendanceCorrectionApproved",
+                Module = "Attendance",
+                EntityName = nameof(AttendanceRecord),
+                EntityId = record.Id.ToString(),
+                OldValues = oldValues,
+                NewValues =
+                    $"ClockInAt={record.ClockInAt:o};ClockOutAt={record.ClockOutAt:o};Status={record.Status};Minutes={record.TotalWorkMinutes};Notes={record.Notes};RequestId={item.Id}",
+                IpAddress = GetIpAddress(),
+                UserAgent = GetUserAgent()
+            });
+        }
+
+        dbContext.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = actor.Id,
+            Action = request.Approve ? "AttendanceCorrectionReviewApproved" : "AttendanceCorrectionReviewRejected",
+            Module = "Attendance",
+            EntityName = nameof(AttendanceCorrectionRequest),
+            EntityId = item.Id.ToString(),
+            NewValues = $"Status={item.Status};ReviewerNote={item.ReviewerNote}",
+            IpAddress = GetIpAddress(),
+            UserAgent = GetUserAgent()
+        });
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await dbContext.Entry(item).Reference(x => x.ReviewedByUser).LoadAsync(cancellationToken);
+
+        return MapCorrection(item);
     }
 
     public async Task<AttendanceListResponse> GetAttendanceAsync(
@@ -400,5 +595,57 @@ public sealed class AttendanceService(
             record.ClockInNetworkValidation,
             record.ClockOutNetworkValidation,
             record.Notes);
+    }
+
+    private static AttendanceDetailResponse MapDetail(AttendanceRecord record)
+    {
+        return new AttendanceDetailResponse(
+            record.Id,
+            record.UserId,
+            record.User.DisplayName,
+            record.User.EmployeeId,
+            record.User.Department ?? string.Empty,
+            record.User.Designation ?? string.Empty,
+            record.Branch?.Name ?? record.User.Branch?.Name ?? string.Empty,
+            record.AttendanceDate,
+            record.ClockInAt,
+            record.ClockOutAt,
+            record.TotalWorkMinutes,
+            record.Status,
+            record.IsLate,
+            record.LateMinutes,
+            record.ClockInIp,
+            record.ClockOutIp,
+            record.ClockInUserAgent,
+            record.ClockOutUserAgent,
+            record.ClockInDeviceSummary,
+            record.ClockOutDeviceSummary,
+            record.ClockInNetworkValidation,
+            record.ClockOutNetworkValidation,
+            record.Notes,
+            record.CreatedAt,
+            record.UpdatedAt,
+            record.CreatedBy,
+            record.UpdatedBy);
+    }
+
+    private static AttendanceCorrectionRequestResponse MapCorrection(AttendanceCorrectionRequest item)
+    {
+        return new AttendanceCorrectionRequestResponse(
+            item.Id,
+            item.AttendanceRecordId,
+            item.RequestedByUserId,
+            item.RequestedByUser.DisplayName,
+            item.AttendanceRecord.AttendanceDate,
+            item.RequestedClockInAt,
+            item.RequestedClockOutAt,
+            item.RequestedNotes,
+            item.Reason,
+            item.Status,
+            item.CreatedAt,
+            item.ReviewedByUserId,
+            item.ReviewedByUser?.DisplayName,
+            item.ReviewedAt,
+            item.ReviewerNote);
     }
 }
