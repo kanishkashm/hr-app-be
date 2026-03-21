@@ -19,9 +19,18 @@ public interface IReportService
         DateOnly? toDate,
         Guid? branchId,
         string? department,
+        string? status,
         CancellationToken cancellationToken = default);
 
     Task<string> ExportAttendanceCsvAsync(
+        DateOnly? fromDate,
+        DateOnly? toDate,
+        Guid? branchId,
+        string? department,
+        string? status,
+        CancellationToken cancellationToken = default);
+
+    Task<byte[]> ExportAttendanceExcelAsync(
         DateOnly? fromDate,
         DateOnly? toDate,
         Guid? branchId,

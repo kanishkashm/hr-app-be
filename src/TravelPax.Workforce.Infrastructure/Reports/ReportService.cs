@@ -1,4 +1,5 @@
 using System.Text;
+using ClosedXML.Excel;
 using Microsoft.EntityFrameworkCore;
 using TravelPax.Workforce.Application.Abstractions.Reports;
 using TravelPax.Workforce.Contracts.Reports;
@@ -42,12 +43,13 @@ public sealed class ReportService(TravelPaxDbContext dbContext) : IReportService
         DateOnly? toDate,
         Guid? branchId,
         string? department,
+        string? status,
         CancellationToken cancellationToken = default)
     {
         var resolvedTo = toDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
         var resolvedFrom = fromDate ?? resolvedTo.AddDays(-13);
 
-        var data = await BuildQuery(resolvedFrom, resolvedTo, branchId, department, null)
+        var data = await BuildQuery(resolvedFrom, resolvedTo, branchId, department, status)
             .ToListAsync(cancellationToken);
 
         var trend = data
@@ -78,7 +80,7 @@ public sealed class ReportService(TravelPaxDbContext dbContext) : IReportService
             .ToListAsync(cancellationToken);
 
         var builder = new StringBuilder();
-        builder.AppendLine("AttendanceDate,EmployeeId,EmployeeName,Department,Designation,Branch,ClockInAt,ClockOutAt,TotalWorkMinutes,Status,IsLate,ClockInNetwork,ClockOutNetwork");
+        builder.AppendLine("AttendanceDate,EmployeeId,EmployeeName,Department,Designation,Branch,ClockInAt,ClockOutAt,TotalWorkMinutes,Status,IsLate,LateMinutes,ClockInIp,ClockOutIp,ClockInNetwork,ClockOutNetwork,ClockInDevice,ClockOutDevice,ClockInUserAgent,ClockOutUserAgent,Notes");
 
         foreach (var item in data)
         {
@@ -94,11 +96,84 @@ public sealed class ReportService(TravelPaxDbContext dbContext) : IReportService
                 Escape(item.TotalWorkMinutes?.ToString() ?? string.Empty),
                 Escape(item.Status),
                 Escape(item.IsLate ? "Yes" : "No"),
+                Escape(item.LateMinutes?.ToString() ?? string.Empty),
+                Escape(item.ClockInIp ?? string.Empty),
+                Escape(item.ClockOutIp ?? string.Empty),
                 Escape(item.ClockInNetworkValidation ?? string.Empty),
-                Escape(item.ClockOutNetworkValidation ?? string.Empty)));
+                Escape(item.ClockOutNetworkValidation ?? string.Empty),
+                Escape(item.ClockInDeviceSummary ?? string.Empty),
+                Escape(item.ClockOutDeviceSummary ?? string.Empty),
+                Escape(item.ClockInUserAgent ?? string.Empty),
+                Escape(item.ClockOutUserAgent ?? string.Empty),
+                Escape(item.Notes ?? string.Empty)));
         }
 
         return builder.ToString();
+    }
+
+    public async Task<byte[]> ExportAttendanceExcelAsync(
+        DateOnly? fromDate,
+        DateOnly? toDate,
+        Guid? branchId,
+        string? department,
+        string? status,
+        CancellationToken cancellationToken = default)
+    {
+        var data = await BuildQuery(fromDate, toDate, branchId, department, status)
+            .OrderByDescending(x => x.AttendanceDate)
+            .ThenBy(x => x.User.DisplayName)
+            .ToListAsync(cancellationToken);
+
+        using var workbook = new XLWorkbook();
+        var worksheet = workbook.Worksheets.Add("Attendance Report");
+
+        var headers = new[]
+        {
+            "AttendanceDate", "EmployeeId", "EmployeeName", "Department", "Designation", "Branch",
+            "ClockInAt", "ClockOutAt", "TotalWorkMinutes", "Status", "IsLate", "LateMinutes",
+            "ClockInIp", "ClockOutIp", "ClockInNetwork", "ClockOutNetwork",
+            "ClockInDevice", "ClockOutDevice", "ClockInUserAgent", "ClockOutUserAgent", "Notes"
+        };
+
+        for (var i = 0; i < headers.Length; i++)
+        {
+            worksheet.Cell(1, i + 1).Value = headers[i];
+        }
+
+        var row = 2;
+        foreach (var item in data)
+        {
+            worksheet.Cell(row, 1).Value = item.AttendanceDate.ToString("yyyy-MM-dd");
+            worksheet.Cell(row, 2).Value = item.User.EmployeeId;
+            worksheet.Cell(row, 3).Value = item.User.DisplayName;
+            worksheet.Cell(row, 4).Value = item.User.Department ?? string.Empty;
+            worksheet.Cell(row, 5).Value = item.User.Designation ?? string.Empty;
+            worksheet.Cell(row, 6).Value = item.Branch?.Name ?? item.User.Branch?.Name ?? string.Empty;
+            worksheet.Cell(row, 7).Value = item.ClockInAt?.ToString("o") ?? string.Empty;
+            worksheet.Cell(row, 8).Value = item.ClockOutAt?.ToString("o") ?? string.Empty;
+            worksheet.Cell(row, 9).Value = item.TotalWorkMinutes?.ToString() ?? string.Empty;
+            worksheet.Cell(row, 10).Value = item.Status;
+            worksheet.Cell(row, 11).Value = item.IsLate ? "Yes" : "No";
+            worksheet.Cell(row, 12).Value = item.LateMinutes?.ToString() ?? string.Empty;
+            worksheet.Cell(row, 13).Value = item.ClockInIp ?? string.Empty;
+            worksheet.Cell(row, 14).Value = item.ClockOutIp ?? string.Empty;
+            worksheet.Cell(row, 15).Value = item.ClockInNetworkValidation ?? string.Empty;
+            worksheet.Cell(row, 16).Value = item.ClockOutNetworkValidation ?? string.Empty;
+            worksheet.Cell(row, 17).Value = item.ClockInDeviceSummary ?? string.Empty;
+            worksheet.Cell(row, 18).Value = item.ClockOutDeviceSummary ?? string.Empty;
+            worksheet.Cell(row, 19).Value = item.ClockInUserAgent ?? string.Empty;
+            worksheet.Cell(row, 20).Value = item.ClockOutUserAgent ?? string.Empty;
+            worksheet.Cell(row, 21).Value = item.Notes ?? string.Empty;
+            row++;
+        }
+
+        worksheet.Row(1).Style.Font.Bold = true;
+        worksheet.SheetView.FreezeRows(1);
+        worksheet.Columns().AdjustToContents();
+
+        using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+        return stream.ToArray();
     }
 
     private IQueryable<AttendanceRecord> BuildQuery(
@@ -137,7 +212,12 @@ public sealed class ReportService(TravelPaxDbContext dbContext) : IReportService
             data.Count(x => x.Status == "Late"),
             data.Count(x => x.Status == "PendingClockOut"),
             data.Select(x => x.UserId).Distinct().Count(),
-            Math.Round(avgWorkMinutes / 60d, 2));
+            Math.Round(avgWorkMinutes / 60d, 2),
+            data.Count(x => string.Equals(x.ClockInNetworkValidation, "InsideOfficeNetwork", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(x.ClockOutNetworkValidation, "InsideOfficeNetwork", StringComparison.OrdinalIgnoreCase)),
+            data.Count(x => string.Equals(x.ClockInNetworkValidation, "OutsideOfficeNetwork", StringComparison.OrdinalIgnoreCase) &&
+                            !string.Equals(x.ClockOutNetworkValidation, "InsideOfficeNetwork", StringComparison.OrdinalIgnoreCase)),
+            data.Count(x => string.IsNullOrWhiteSpace(x.ClockInNetworkValidation) && string.IsNullOrWhiteSpace(x.ClockOutNetworkValidation)));
     }
 
     private static AttendanceReportItemResponse MapItem(AttendanceRecord record)

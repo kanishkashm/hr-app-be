@@ -23,7 +23,10 @@ public sealed record AttendanceReportSummaryResponse(
     int TotalLate,
     int TotalPendingClockOut,
     int UniqueEmployees,
-    double AverageWorkHours);
+    double AverageWorkHours,
+    int InsideOfficeCount,
+    int OutsideOfficeCount,
+    int UnknownNetworkCount);
 
 public sealed record AttendanceTrendPointResponse(
     DateOnly Date,
