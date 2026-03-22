@@ -37,6 +37,7 @@ public sealed class AttendanceService(
     {
         var user = await GetCurrentUserEntityAsync(cancellationToken);
         var today = GetBusinessDate();
+        await EnsureAttendanceDateUnlockedAsync(today, user.BranchId, cancellationToken);
         var existing = await LoadAttendanceRecordAsync(user.Id, today, cancellationToken);
         if (existing is not null)
         {
@@ -88,6 +89,7 @@ public sealed class AttendanceService(
     {
         var user = await GetCurrentUserEntityAsync(cancellationToken);
         var today = GetBusinessDate();
+        await EnsureAttendanceDateUnlockedAsync(today, user.BranchId, cancellationToken);
         var record = await LoadAttendanceRecordAsync(user.Id, today, cancellationToken)
             ?? throw new InvalidOperationException("You must clock in before clocking out.");
 
@@ -163,6 +165,7 @@ public sealed class AttendanceService(
             .Include(x => x.Branch)
             .FirstOrDefaultAsync(x => x.Id == attendanceId, cancellationToken)
             ?? throw new InvalidOperationException("Attendance record not found.");
+        await EnsureAttendanceDateUnlockedAsync(record.AttendanceDate, record.BranchId, cancellationToken);
 
         if (request.ClockInAt is not null && request.ClockOutAt is not null && request.ClockOutAt <= request.ClockInAt)
         {
@@ -205,6 +208,7 @@ public sealed class AttendanceService(
             .Include(x => x.Branch)
             .FirstOrDefaultAsync(x => x.Id == attendanceId && x.UserId == actor.Id, cancellationToken)
             ?? throw new InvalidOperationException("Attendance record not found.");
+        await EnsureAttendanceDateUnlockedAsync(record.AttendanceDate, record.BranchId, cancellationToken);
 
         if (request.ClockInAt is null)
         {
@@ -259,6 +263,7 @@ public sealed class AttendanceService(
             .Include(x => x.User)
             .FirstOrDefaultAsync(x => x.Id == attendanceId && x.UserId == actor.Id, cancellationToken)
             ?? throw new InvalidOperationException("Attendance record not found.");
+        await EnsureAttendanceDateUnlockedAsync(record.AttendanceDate, record.BranchId, cancellationToken);
 
         if (string.IsNullOrWhiteSpace(request.Reason))
         {
@@ -390,6 +395,7 @@ public sealed class AttendanceService(
         if (request.Approve)
         {
             var record = item.AttendanceRecord;
+            await EnsureAttendanceDateUnlockedAsync(record.AttendanceDate, record.BranchId, cancellationToken);
             var oldValues =
                 $"ClockInAt={record.ClockInAt:o};ClockOutAt={record.ClockOutAt:o};Status={record.Status};Minutes={record.TotalWorkMinutes};Notes={record.Notes}";
 
@@ -557,6 +563,24 @@ public sealed class AttendanceService(
     }
 
     private static DateOnly GetBusinessDate() => DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTime.UtcNow, TimezoneId));
+
+    private async Task EnsureAttendanceDateUnlockedAsync(DateOnly attendanceDate, Guid? branchId, CancellationToken cancellationToken)
+    {
+        var isLocked = await dbContext.AttendancePeriodLocks.AnyAsync(
+            x => x.IsLocked
+                 && x.Year == attendanceDate.Year
+                 && x.Month == attendanceDate.Month
+                 && (x.BranchId == null || (branchId != null && x.BranchId == branchId)),
+            cancellationToken);
+
+        if (!isLocked)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"Attendance for period {attendanceDate:yyyy-MM} is locked for payroll finalization. Please contact HR Admin.");
+    }
 
     private string? GetIpAddress()
     {

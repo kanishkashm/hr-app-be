@@ -11,4 +11,6 @@ public interface ISettingsService
     Task<AllowedNetworkResponse> CreateAllowedNetworkAsync(UpsertAllowedNetworkRequest request, CancellationToken cancellationToken = default);
     Task<AllowedNetworkResponse> UpdateAllowedNetworkAsync(Guid networkId, UpsertAllowedNetworkRequest request, CancellationToken cancellationToken = default);
     Task<NetworkValidationCheckResponse> TestNetworkAsync(NetworkValidationCheckRequest request, CancellationToken cancellationToken = default);
+    Task<IReadOnlyCollection<AttendancePeriodLockResponse>> GetAttendancePeriodLocksAsync(int? year, int? month, Guid? branchId, CancellationToken cancellationToken = default);
+    Task<AttendancePeriodLockResponse> SetAttendancePeriodLockAsync(SetAttendancePeriodLockRequest request, CancellationToken cancellationToken = default);
 }

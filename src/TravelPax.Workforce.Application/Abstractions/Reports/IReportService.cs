@@ -37,4 +37,20 @@ public interface IReportService
         string? department,
         string? status,
         CancellationToken cancellationToken = default);
+
+    Task<string> ExportPayrollCsvAsync(
+        DateOnly? fromDate,
+        DateOnly? toDate,
+        Guid? branchId,
+        string? department,
+        string? status,
+        CancellationToken cancellationToken = default);
+
+    Task<byte[]> ExportPayrollExcelAsync(
+        DateOnly? fromDate,
+        DateOnly? toDate,
+        Guid? branchId,
+        string? department,
+        string? status,
+        CancellationToken cancellationToken = default);
 }

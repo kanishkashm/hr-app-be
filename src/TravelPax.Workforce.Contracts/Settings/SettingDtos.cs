@@ -69,3 +69,23 @@ public sealed record NetworkValidationCheckResponse(
     string Status,
     string? MatchedRuleName,
     string? MatchedRuleIpOrCidr);
+
+public sealed record AttendancePeriodLockResponse(
+    Guid Id,
+    int Year,
+    int Month,
+    Guid? BranchId,
+    string BranchName,
+    bool IsLocked,
+    DateTimeOffset LockedAt,
+    Guid? LockedByUserId,
+    DateTimeOffset? UnlockedAt,
+    Guid? UnlockedByUserId,
+    string? Notes);
+
+public sealed record SetAttendancePeriodLockRequest(
+    int Year,
+    int Month,
+    Guid? BranchId,
+    bool IsLocked,
+    string? Notes);

@@ -227,6 +227,136 @@ public sealed class SettingsService(
             matchedRule?.IpOrCidr);
     }
 
+    public async Task<IReadOnlyCollection<AttendancePeriodLockResponse>> GetAttendancePeriodLocksAsync(
+        int? year,
+        int? month,
+        Guid? branchId,
+        CancellationToken cancellationToken = default)
+    {
+        var now = DateTime.UtcNow;
+        var resolvedYear = year ?? now.Year;
+
+        var query = dbContext.AttendancePeriodLocks
+            .Include(x => x.Branch)
+            .OrderByDescending(x => x.Year)
+            .ThenByDescending(x => x.Month)
+            .ThenBy(x => x.BranchId == null ? 0 : 1)
+            .AsQueryable();
+
+        query = query.Where(x => x.Year == resolvedYear);
+        if (month is not null)
+        {
+            query = query.Where(x => x.Month == month.Value);
+        }
+
+        if (branchId is not null)
+        {
+            query = query.Where(x => x.BranchId == branchId);
+        }
+
+        var items = await query.ToListAsync(cancellationToken);
+        return items.Select(MapAttendancePeriodLock).ToArray();
+    }
+
+    public async Task<AttendancePeriodLockResponse> SetAttendancePeriodLockAsync(
+        SetAttendancePeriodLockRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request.Year < 2000 || request.Year > 2100)
+        {
+            throw new InvalidOperationException("Year must be between 2000 and 2100.");
+        }
+
+        if (request.Month is < 1 or > 12)
+        {
+            throw new InvalidOperationException("Month must be between 1 and 12.");
+        }
+
+        var actorId = currentUserService.UserId;
+        var actor = actorId is null
+            ? throw new UnauthorizedAccessException("User is not authenticated.")
+            : actorId.Value;
+
+        OfficeBranch? branch = null;
+        if (request.BranchId is not null)
+        {
+            branch = await dbContext.OfficeBranches.FirstOrDefaultAsync(x => x.Id == request.BranchId.Value, cancellationToken)
+                ?? throw new InvalidOperationException("Branch not found.");
+        }
+
+        var entity = await dbContext.AttendancePeriodLocks
+            .Include(x => x.Branch)
+            .FirstOrDefaultAsync(
+                x => x.Year == request.Year
+                     && x.Month == request.Month
+                     && x.BranchId == request.BranchId,
+                cancellationToken);
+
+        var action = request.IsLocked ? "AttendancePeriodLocked" : "AttendancePeriodUnlocked";
+        var scope = branch?.Code ?? "ALL_BRANCHES";
+        var normalizedNotes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim();
+
+        if (entity is null)
+        {
+            entity = new AttendancePeriodLock
+            {
+                Id = Guid.NewGuid(),
+                Year = request.Year,
+                Month = request.Month,
+                BranchId = request.BranchId,
+                Branch = branch,
+                IsLocked = request.IsLocked,
+                LockedAt = DateTimeOffset.UtcNow,
+                LockedByUserId = request.IsLocked ? actor : null,
+                UnlockedAt = request.IsLocked ? null : DateTimeOffset.UtcNow,
+                UnlockedByUserId = request.IsLocked ? null : actor,
+                Notes = normalizedNotes,
+                CreatedBy = actor,
+                UpdatedBy = actor
+            };
+
+            dbContext.AttendancePeriodLocks.Add(entity);
+        }
+        else
+        {
+            entity.IsLocked = request.IsLocked;
+            entity.Notes = normalizedNotes;
+            entity.UpdatedAt = DateTimeOffset.UtcNow;
+            entity.UpdatedBy = actor;
+
+            if (request.IsLocked)
+            {
+                entity.LockedAt = DateTimeOffset.UtcNow;
+                entity.LockedByUserId = actor;
+                entity.UnlockedAt = null;
+                entity.UnlockedByUserId = null;
+            }
+            else
+            {
+                entity.UnlockedAt = DateTimeOffset.UtcNow;
+                entity.UnlockedByUserId = actor;
+            }
+        }
+
+        dbContext.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = actor,
+            Action = action,
+            Module = "Attendance",
+            EntityName = nameof(AttendancePeriodLock),
+            EntityId = entity.Id.ToString(),
+            NewValues = $"Year={request.Year};Month={request.Month};Scope={scope};IsLocked={request.IsLocked};Notes={entity.Notes}"
+        });
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        if (entity.Branch is null && entity.BranchId is not null)
+        {
+            await dbContext.Entry(entity).Reference(x => x.Branch).LoadAsync(cancellationToken);
+        }
+
+        return MapAttendancePeriodLock(entity);
+    }
+
     private async Task<CompanySetting> GetCompanyEntityAsync(CancellationToken cancellationToken)
     {
         return await dbContext.CompanySettings.OrderBy(x => x.CreatedAt).FirstAsync(cancellationToken);
@@ -261,6 +391,22 @@ public sealed class SettingsService(
             network.ValidationMode,
             network.IsActive,
             network.Priority);
+    }
+
+    private static AttendancePeriodLockResponse MapAttendancePeriodLock(AttendancePeriodLock item)
+    {
+        return new AttendancePeriodLockResponse(
+            item.Id,
+            item.Year,
+            item.Month,
+            item.BranchId,
+            item.Branch?.Name ?? "All Branches",
+            item.IsLocked,
+            item.LockedAt,
+            item.LockedByUserId,
+            item.UnlockedAt,
+            item.UnlockedByUserId,
+            item.Notes);
     }
 
     private static string? NormalizeNullable(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

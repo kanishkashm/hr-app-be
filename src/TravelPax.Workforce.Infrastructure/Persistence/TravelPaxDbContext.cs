@@ -15,6 +15,7 @@ public sealed class TravelPaxDbContext(DbContextOptions<TravelPaxDbContext> opti
     public DbSet<AllowedNetwork> AllowedNetworks => Set<AllowedNetwork>();
     public DbSet<CompanySetting> CompanySettings => Set<CompanySetting>();
     public DbSet<AttendanceRecord> AttendanceRecords => Set<AttendanceRecord>();
+    public DbSet<AttendancePeriodLock> AttendancePeriodLocks => Set<AttendancePeriodLock>();
     public DbSet<AttendanceCorrectionRequest> AttendanceCorrectionRequests => Set<AttendanceCorrectionRequest>();
     public DbSet<LeaveRequest> LeaveRequests => Set<LeaveRequest>();
     public DbSet<LeavePolicy> LeavePolicies => Set<LeavePolicy>();
@@ -99,6 +100,16 @@ public sealed class TravelPaxDbContext(DbContextOptions<TravelPaxDbContext> opti
             entity.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.SetNull);
             entity.HasOne(x => x.ClockInNetworkRule).WithMany().HasForeignKey(x => x.ClockInNetworkRuleId).OnDelete(DeleteBehavior.SetNull);
             entity.HasOne(x => x.ClockOutNetworkRule).WithMany().HasForeignKey(x => x.ClockOutNetworkRuleId).OnDelete(DeleteBehavior.SetNull);
+        });
+        builder.Entity<AttendancePeriodLock>(entity =>
+        {
+            entity.ToTable("attendance_period_locks");
+            entity.Property(x => x.Notes).HasMaxLength(1000);
+            entity.HasIndex(x => new { x.Year, x.Month, x.BranchId }).IsUnique();
+            entity.HasIndex(x => new { x.Year, x.Month, x.IsLocked });
+            entity.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(x => x.LockedByUser).WithMany().HasForeignKey(x => x.LockedByUserId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(x => x.UnlockedByUser).WithMany().HasForeignKey(x => x.UnlockedByUserId).OnDelete(DeleteBehavior.SetNull);
         });
         builder.Entity<AttendanceCorrectionRequest>(entity =>
         {

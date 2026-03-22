@@ -113,6 +113,50 @@ public sealed class ReportsController(IReportService reportService) : Controller
         return File(fileContent, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
     }
 
+    [HttpGet("attendance/export/payroll")]
+    [Authorize(Policy = PermissionCodes.ReportsView)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> ExportPayrollCsv(
+        [FromQuery] DateOnly? fromDate,
+        [FromQuery] DateOnly? toDate,
+        [FromQuery] Guid? branchId,
+        [FromQuery] string? department,
+        [FromQuery] string? status,
+        CancellationToken cancellationToken = default)
+    {
+        var validationError = ValidateQuery(fromDate, toDate, page: 1, pageSize: 20, requirePaginationValidation: false);
+        if (validationError is not null)
+        {
+            return BadRequest(new { message = validationError });
+        }
+
+        var csv = await reportService.ExportPayrollCsvAsync(fromDate, toDate, branchId, department, status, cancellationToken);
+        var fileName = $"attendance-payroll-{DateTime.UtcNow:yyyyMMddHHmmss}.csv";
+        return File(System.Text.Encoding.UTF8.GetBytes(csv), "text/csv", fileName);
+    }
+
+    [HttpGet("attendance/export/payroll/xlsx")]
+    [Authorize(Policy = PermissionCodes.ReportsView)]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> ExportPayrollExcel(
+        [FromQuery] DateOnly? fromDate,
+        [FromQuery] DateOnly? toDate,
+        [FromQuery] Guid? branchId,
+        [FromQuery] string? department,
+        [FromQuery] string? status,
+        CancellationToken cancellationToken = default)
+    {
+        var validationError = ValidateQuery(fromDate, toDate, page: 1, pageSize: 20, requirePaginationValidation: false);
+        if (validationError is not null)
+        {
+            return BadRequest(new { message = validationError });
+        }
+
+        var fileContent = await reportService.ExportPayrollExcelAsync(fromDate, toDate, branchId, department, status, cancellationToken);
+        var fileName = $"attendance-payroll-{DateTime.UtcNow:yyyyMMddHHmmss}.xlsx";
+        return File(fileContent, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
+    }
+
     private static string? ValidateQuery(
         DateOnly? fromDate,
         DateOnly? toDate,

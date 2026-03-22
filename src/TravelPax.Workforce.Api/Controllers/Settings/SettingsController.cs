@@ -81,4 +81,34 @@ public sealed class SettingsController(ISettingsService settingsService) : Contr
             return BadRequest(new { message = exception.Message });
         }
     }
+
+    [HttpGet("attendance-locks")]
+    [Authorize(Policy = PermissionCodes.AttendanceManage)]
+    [ProducesResponseType(typeof(IReadOnlyCollection<AttendancePeriodLockResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAttendanceLocks(
+        [FromQuery] int? year,
+        [FromQuery] int? month,
+        [FromQuery] Guid? branchId,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await settingsService.GetAttendancePeriodLocksAsync(year, month, branchId, cancellationToken);
+        return Ok(response);
+    }
+
+    [HttpPut("attendance-locks")]
+    [Authorize(Policy = PermissionCodes.AttendanceManage)]
+    [ProducesResponseType(typeof(AttendancePeriodLockResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> SetAttendanceLock([FromBody] SetAttendancePeriodLockRequest request, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await settingsService.SetAttendancePeriodLockAsync(request, cancellationToken);
+            return Ok(response);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+    }
 }
