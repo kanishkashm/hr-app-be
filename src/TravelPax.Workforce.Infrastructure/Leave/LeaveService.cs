@@ -39,7 +39,7 @@ public sealed class LeaveService(
             throw new InvalidOperationException("Half-day leave is only supported for single-day requests.");
         }
 
-        var totalDays = await CalculateRequestedLeaveDaysAsync(request.StartDate, request.EndDate, dayPortion, cancellationToken);
+        var totalDays = await CalculateRequestedLeaveDaysAsync(request.StartDate, request.EndDate, actor.BranchId, dayPortion, cancellationToken);
         if (totalDays <= 0)
         {
             throw new InvalidOperationException("Selected range has no working leave days after weekend/holiday rules.");
@@ -452,21 +452,53 @@ public sealed class LeaveService(
             .SumAsync(x => (decimal?)x.TotalDays, cancellationToken) ?? 0m;
     }
 
-    private async Task<decimal> CalculateRequestedLeaveDaysAsync(DateOnly startDate, DateOnly endDate, string dayPortion, CancellationToken cancellationToken)
+    private async Task<decimal> CalculateRequestedLeaveDaysAsync(
+        DateOnly startDate,
+        DateOnly endDate,
+        Guid? branchId,
+        string dayPortion,
+        CancellationToken cancellationToken)
     {
         var settings = await dbContext.CompanySettings.OrderBy(x => x.CreatedAt).FirstAsync(cancellationToken);
         var weekendDays = ParseWeekendDays(settings.WeekendConfig);
         var holidayDates = ParseHolidayDates(settings.WeekendConfig);
+        var scopedCalendarEntries = await dbContext.WorkCalendarEntries
+            .Where(x => x.IsActive
+                        && (x.BranchId == null || x.BranchId == branchId)
+                        && (!x.IsRecurringAnnual
+                            ? x.CalendarDate >= startDate && x.CalendarDate <= endDate
+                            : true))
+            .ToListAsync(cancellationToken);
+
+        var oneTimeNonWorking = scopedCalendarEntries
+            .Where(x => !x.IsRecurringAnnual && (x.DayType == "PublicHoliday" || x.DayType == "CustomNonWorkingDay"))
+            .Select(x => x.CalendarDate)
+            .ToHashSet();
+        var oneTimeSpecialWorking = scopedCalendarEntries
+            .Where(x => !x.IsRecurringAnnual && x.DayType == "SpecialWorkingDay")
+            .Select(x => x.CalendarDate)
+            .ToHashSet();
+        var recurringNonWorking = scopedCalendarEntries
+            .Where(x => x.IsRecurringAnnual && (x.DayType == "PublicHoliday" || x.DayType == "CustomNonWorkingDay"))
+            .Select(x => (x.CalendarDate.Month, x.CalendarDate.Day))
+            .ToHashSet();
+        var recurringSpecialWorking = scopedCalendarEntries
+            .Where(x => x.IsRecurringAnnual && x.DayType == "SpecialWorkingDay")
+            .Select(x => (x.CalendarDate.Month, x.CalendarDate.Day))
+            .ToHashSet();
 
         decimal total = 0m;
         for (var date = startDate; date <= endDate; date = date.AddDays(1))
         {
-            if (weekendDays.Contains(date.DayOfWeek))
-            {
-                continue;
-            }
-
-            if (holidayDates.Contains(date))
+            var isSpecialWorking =
+                oneTimeSpecialWorking.Contains(date)
+                || recurringSpecialWorking.Contains((date.Month, date.Day));
+            var isNonWorking =
+                weekendDays.Contains(date.DayOfWeek)
+                || holidayDates.Contains(date)
+                || oneTimeNonWorking.Contains(date)
+                || recurringNonWorking.Contains((date.Month, date.Day));
+            if (isNonWorking && !isSpecialWorking)
             {
                 continue;
             }

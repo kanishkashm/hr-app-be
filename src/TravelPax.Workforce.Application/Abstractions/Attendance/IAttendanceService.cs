@@ -12,9 +12,10 @@ public interface IAttendanceService
     Task<AttendanceRecordResponse> CorrectAttendanceAsync(Guid attendanceId, AttendanceCorrectionUpdateRequest request, CancellationToken cancellationToken = default);
     Task<AttendanceRecordResponse> SelfCorrectAttendanceAsync(Guid attendanceId, AttendanceCorrectionUpdateRequest request, CancellationToken cancellationToken = default);
     Task<AttendanceCorrectionRequestResponse> SubmitCorrectionRequestAsync(Guid attendanceId, AttendanceCorrectionSubmissionRequest request, CancellationToken cancellationToken = default);
-    Task<IReadOnlyCollection<AttendanceCorrectionRequestResponse>> GetMyCorrectionRequestsAsync(int take, CancellationToken cancellationToken = default);
-    Task<AttendanceCorrectionRequestListResponse> GetCorrectionRequestsAsync(string? status, int page, int pageSize, CancellationToken cancellationToken = default);
+    Task<IReadOnlyCollection<AttendanceCorrectionRequestResponse>> GetMyCorrectionRequestsAsync(int take, string? requestType, CancellationToken cancellationToken = default);
+    Task<AttendanceCorrectionRequestListResponse> GetCorrectionRequestsAsync(string? status, string? requestType, bool teamOnly, int page, int pageSize, CancellationToken cancellationToken = default);
     Task<AttendanceCorrectionRequestResponse> ReviewCorrectionRequestAsync(Guid requestId, AttendanceCorrectionReviewRequest request, CancellationToken cancellationToken = default);
+    Task<AttendanceExceptionDetailResponse> GetCorrectionRequestDetailAsync(Guid requestId, CancellationToken cancellationToken = default);
     Task<AttendanceListResponse> GetAttendanceAsync(
         DateOnly? fromDate,
         DateOnly? toDate,

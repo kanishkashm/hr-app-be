@@ -65,7 +65,10 @@ public sealed class UserService(
 
     public async Task<UserDetailResponse> GetUserAsync(Guid userId, CancellationToken cancellationToken = default)
     {
-        var user = await dbContext.Users.Include(x => x.Branch).FirstOrDefaultAsync(x => x.Id == userId, cancellationToken)
+        var user = await dbContext.Users
+            .Include(x => x.Branch)
+            .Include(x => x.ReportingManager)
+            .FirstOrDefaultAsync(x => x.Id == userId, cancellationToken)
             ?? throw new InvalidOperationException("User not found.");
 
         return await MapDetailAsync(user);
@@ -232,9 +235,14 @@ public sealed class UserService(
             throw new UnauthorizedAccessException("User is not authenticated.");
         }
 
-        var user = await dbContext.Users.Include(x => x.Branch).FirstAsync(x => x.Id == currentUserService.UserId.Value, cancellationToken);
+        var user = await dbContext.Users
+            .Include(x => x.Branch)
+            .Include(x => x.ReportingManager)
+            .FirstAsync(x => x.Id == currentUserService.UserId.Value, cancellationToken);
         user.DisplayName = request.DisplayName.Trim();
         user.MobileNumber = request.MobileNumber;
+        user.EmergencyContactName = NormalizeNullable(request.EmergencyContactName);
+        user.EmergencyContactPhone = NormalizeNullable(request.EmergencyContactPhone);
         user.UpdatedAt = DateTimeOffset.UtcNow;
         user.UpdatedBy = user.Id;
 
@@ -242,6 +250,172 @@ public sealed class UserService(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         return await MapDetailAsync(user);
+    }
+
+    public async Task<ProfileUpdateRequestResponse> SubmitMyProfileUpdateRequestAsync(
+        CreateMyProfileUpdateRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (currentUserService.UserId is null)
+        {
+            throw new UnauthorizedAccessException("User is not authenticated.");
+        }
+
+        var user = await dbContext.Users
+            .FirstAsync(x => x.Id == currentUserService.UserId.Value, cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(request.DisplayName))
+        {
+            throw new InvalidOperationException("Display name is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Reason))
+        {
+            throw new InvalidOperationException("Reason is required.");
+        }
+
+        var pendingExists = await dbContext.UserProfileUpdateRequests.AnyAsync(
+            x => x.UserId == user.Id && x.Status == "Pending",
+            cancellationToken);
+        if (pendingExists)
+        {
+            throw new InvalidOperationException("You already have a pending profile update request.");
+        }
+
+        var entity = new UserProfileUpdateRequest
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            User = user,
+            CurrentDisplayName = user.DisplayName,
+            CurrentMobileNumber = user.MobileNumber,
+            CurrentEmergencyContactName = user.EmergencyContactName,
+            CurrentEmergencyContactPhone = user.EmergencyContactPhone,
+            RequestedDisplayName = request.DisplayName.Trim(),
+            RequestedMobileNumber = NormalizeNullable(request.MobileNumber),
+            RequestedEmergencyContactName = NormalizeNullable(request.EmergencyContactName),
+            RequestedEmergencyContactPhone = NormalizeNullable(request.EmergencyContactPhone),
+            Reason = request.Reason.Trim(),
+            Status = "Pending",
+            CreatedBy = user.Id,
+            UpdatedBy = user.Id
+        };
+
+        dbContext.UserProfileUpdateRequests.Add(entity);
+        dbContext.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = user.Id,
+            Action = "ProfileUpdateRequested",
+            Module = "Users",
+            EntityName = nameof(UserProfileUpdateRequest),
+            EntityId = entity.Id.ToString(),
+            NewValues = $"DisplayName={entity.RequestedDisplayName};Mobile={entity.RequestedMobileNumber};EmergencyName={entity.RequestedEmergencyContactName};EmergencyPhone={entity.RequestedEmergencyContactPhone};Reason={entity.Reason}"
+        });
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return MapProfileUpdateRequest(entity);
+    }
+
+    public async Task<IReadOnlyCollection<ProfileUpdateRequestResponse>> GetMyProfileUpdateRequestsAsync(int take, CancellationToken cancellationToken = default)
+    {
+        if (currentUserService.UserId is null)
+        {
+            throw new UnauthorizedAccessException("User is not authenticated.");
+        }
+
+        var items = await dbContext.UserProfileUpdateRequests
+            .Include(x => x.User)
+            .Include(x => x.ReviewedByUser)
+            .Where(x => x.UserId == currentUserService.UserId.Value)
+            .OrderByDescending(x => x.CreatedAt)
+            .Take(Math.Clamp(take, 1, 100))
+            .ToListAsync(cancellationToken);
+
+        return items.Select(MapProfileUpdateRequest).ToArray();
+    }
+
+    public async Task<ProfileUpdateRequestListResponse> GetProfileUpdateRequestsAsync(
+        string? status,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken = default)
+    {
+        var query = dbContext.UserProfileUpdateRequests
+            .Include(x => x.User)
+            .Include(x => x.ReviewedByUser)
+            .AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            query = query.Where(x => x.Status == status.Trim());
+        }
+
+        page = Math.Max(page, 1);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+
+        var total = await query.CountAsync(cancellationToken);
+        var items = await query
+            .OrderByDescending(x => x.CreatedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        return new ProfileUpdateRequestListResponse(items.Select(MapProfileUpdateRequest).ToArray(), total);
+    }
+
+    public async Task<ProfileUpdateRequestResponse> ReviewProfileUpdateRequestAsync(
+        Guid requestId,
+        ReviewProfileUpdateRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (currentUserService.UserId is null)
+        {
+            throw new UnauthorizedAccessException("User is not authenticated.");
+        }
+
+        var reviewerId = currentUserService.UserId.Value;
+        var entity = await dbContext.UserProfileUpdateRequests
+            .Include(x => x.User)
+            .Include(x => x.ReviewedByUser)
+            .FirstOrDefaultAsync(x => x.Id == requestId, cancellationToken)
+            ?? throw new InvalidOperationException("Profile update request not found.");
+
+        if (entity.Status != "Pending")
+        {
+            throw new InvalidOperationException("Only pending requests can be reviewed.");
+        }
+
+        entity.Status = request.Approve ? "Approved" : "Rejected";
+        entity.ReviewedByUserId = reviewerId;
+        entity.ReviewedAt = DateTimeOffset.UtcNow;
+        entity.ReviewerComment = NormalizeNullable(request.ReviewerComment);
+        entity.UpdatedAt = DateTimeOffset.UtcNow;
+        entity.UpdatedBy = reviewerId;
+
+        if (request.Approve)
+        {
+            entity.User.DisplayName = entity.RequestedDisplayName;
+            entity.User.MobileNumber = entity.RequestedMobileNumber;
+            entity.User.EmergencyContactName = entity.RequestedEmergencyContactName;
+            entity.User.EmergencyContactPhone = entity.RequestedEmergencyContactPhone;
+            entity.User.UpdatedAt = DateTimeOffset.UtcNow;
+            entity.User.UpdatedBy = reviewerId;
+            entity.AppliedAt = DateTimeOffset.UtcNow;
+        }
+
+        dbContext.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = reviewerId,
+            Action = request.Approve ? "ProfileUpdateApproved" : "ProfileUpdateRejected",
+            Module = "Users",
+            EntityName = nameof(UserProfileUpdateRequest),
+            EntityId = entity.Id.ToString(),
+            NewValues = $"Status={entity.Status};Comment={entity.ReviewerComment};AppliedAt={entity.AppliedAt}"
+        });
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await dbContext.Entry(entity).Reference(x => x.ReviewedByUser).LoadAsync(cancellationToken);
+        return MapProfileUpdateRequest(entity);
     }
 
     public async Task<IReadOnlyCollection<RoleOptionResponse>> GetRoleOptionsAsync(CancellationToken cancellationToken = default)
@@ -277,11 +451,39 @@ public sealed class UserService(
             user.EmploymentType,
             user.DateJoined,
             user.ReportingManagerId,
+            user.ReportingManager?.DisplayName,
             user.BranchId,
             user.Branch?.Name,
+            user.EmergencyContactName,
+            user.EmergencyContactPhone,
             user.Status,
             user.LastLoginAt,
             roles.ToArray());
+    }
+
+    private static ProfileUpdateRequestResponse MapProfileUpdateRequest(UserProfileUpdateRequest item)
+    {
+        return new ProfileUpdateRequestResponse(
+            item.Id,
+            item.UserId,
+            item.User.DisplayName,
+            item.User.EmployeeId,
+            item.CurrentDisplayName,
+            item.CurrentMobileNumber,
+            item.CurrentEmergencyContactName,
+            item.CurrentEmergencyContactPhone,
+            item.RequestedDisplayName,
+            item.RequestedMobileNumber,
+            item.RequestedEmergencyContactName,
+            item.RequestedEmergencyContactPhone,
+            item.Reason,
+            item.Status,
+            item.ReviewedByUserId,
+            item.ReviewedByUser?.DisplayName,
+            item.ReviewedAt,
+            item.ReviewerComment,
+            item.CreatedAt,
+            item.AppliedAt);
     }
 
     private async Task ApplyRolesAsync(AppUser user, IReadOnlyCollection<string> roleCodes)
@@ -307,4 +509,6 @@ public sealed class UserService(
 
         await ApplyRolesAsync(user, roleCodes);
     }
+
+    private static string? NormalizeNullable(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

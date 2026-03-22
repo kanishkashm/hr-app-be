@@ -26,8 +26,11 @@ public sealed record UserDetailResponse(
     string? EmploymentType,
     DateOnly? DateJoined,
     Guid? ReportingManagerId,
+    string? ReportingManagerName,
     Guid? BranchId,
     string? Branch,
+    string? EmergencyContactName,
+    string? EmergencyContactPhone,
     string Status,
     DateTimeOffset? LastLoginAt,
     IReadOnlyCollection<string> Roles);
@@ -74,7 +77,46 @@ public sealed record ResetPasswordRequest(string NewPassword);
 
 public sealed record UpdateMyProfileRequest(
     string DisplayName,
-    string? MobileNumber);
+    string? MobileNumber,
+    string? EmergencyContactName,
+    string? EmergencyContactPhone);
+
+public sealed record CreateMyProfileUpdateRequest(
+    string DisplayName,
+    string? MobileNumber,
+    string? EmergencyContactName,
+    string? EmergencyContactPhone,
+    string Reason);
+
+public sealed record ProfileUpdateRequestResponse(
+    Guid Id,
+    Guid UserId,
+    string EmployeeName,
+    string EmployeeId,
+    string CurrentDisplayName,
+    string? CurrentMobileNumber,
+    string? CurrentEmergencyContactName,
+    string? CurrentEmergencyContactPhone,
+    string RequestedDisplayName,
+    string? RequestedMobileNumber,
+    string? RequestedEmergencyContactName,
+    string? RequestedEmergencyContactPhone,
+    string Reason,
+    string Status,
+    Guid? ReviewedByUserId,
+    string? ReviewedByName,
+    DateTimeOffset? ReviewedAt,
+    string? ReviewerComment,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? AppliedAt);
+
+public sealed record ProfileUpdateRequestListResponse(
+    IReadOnlyCollection<ProfileUpdateRequestResponse> Items,
+    int TotalCount);
+
+public sealed record ReviewProfileUpdateRequest(
+    bool Approve,
+    string? ReviewerComment);
 
 public sealed record RoleOptionResponse(string Code, string Name);
 

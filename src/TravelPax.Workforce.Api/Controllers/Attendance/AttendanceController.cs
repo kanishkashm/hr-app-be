@@ -171,9 +171,9 @@ public sealed class AttendanceController(IAttendanceService attendanceService) :
     [HttpGet("me/correction-requests")]
     [Authorize(Policy = PermissionCodes.AttendanceClock)]
     [ProducesResponseType(typeof(IReadOnlyCollection<AttendanceCorrectionRequestResponse>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetMyCorrectionRequests([FromQuery] int take = 30, CancellationToken cancellationToken = default)
+    public async Task<IActionResult> GetMyCorrectionRequests([FromQuery] int take = 30, [FromQuery] string? requestType = null, CancellationToken cancellationToken = default)
     {
-        var response = await attendanceService.GetMyCorrectionRequestsAsync(take, cancellationToken);
+        var response = await attendanceService.GetMyCorrectionRequestsAsync(take, requestType, cancellationToken);
         return Ok(response);
     }
 
@@ -182,11 +182,22 @@ public sealed class AttendanceController(IAttendanceService attendanceService) :
     [ProducesResponseType(typeof(AttendanceCorrectionRequestListResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetCorrectionRequests(
         [FromQuery] string? status,
+        [FromQuery] string? requestType,
+        [FromQuery] string? scope = null,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         CancellationToken cancellationToken = default)
     {
-        var response = await attendanceService.GetCorrectionRequestsAsync(status, page, pageSize, cancellationToken);
+        var response = await attendanceService.GetCorrectionRequestsAsync(status, requestType, string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase), page, pageSize, cancellationToken);
+        return Ok(response);
+    }
+
+    [HttpGet("correction-requests/{requestId:guid}")]
+    [Authorize(Policy = PermissionCodes.AttendanceManage)]
+    [ProducesResponseType(typeof(AttendanceExceptionDetailResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetCorrectionRequestDetail(Guid requestId, CancellationToken cancellationToken = default)
+    {
+        var response = await attendanceService.GetCorrectionRequestDetailAsync(requestId, cancellationToken);
         return Ok(response);
     }
 
@@ -195,6 +206,79 @@ public sealed class AttendanceController(IAttendanceService attendanceService) :
     [ProducesResponseType(typeof(AttendanceCorrectionRequestResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> ReviewCorrectionRequest(
+        Guid requestId,
+        [FromBody] AttendanceCorrectionReviewRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await attendanceService.ReviewCorrectionRequestAsync(requestId, request, cancellationToken);
+            return Ok(response);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+    }
+
+    [HttpPost("me/{attendanceId:guid}/exceptions")]
+    [Authorize(Policy = PermissionCodes.AttendanceClock)]
+    [ProducesResponseType(typeof(AttendanceCorrectionRequestResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> SubmitExceptionRequest(
+        Guid attendanceId,
+        [FromBody] AttendanceCorrectionSubmissionRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var payload = request with { RequestType = string.IsNullOrWhiteSpace(request.RequestType) ? "MissedPunch" : request.RequestType };
+            var response = await attendanceService.SubmitCorrectionRequestAsync(attendanceId, payload, cancellationToken);
+            return Ok(response);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+    }
+
+    [HttpGet("me/exceptions")]
+    [Authorize(Policy = PermissionCodes.AttendanceClock)]
+    [ProducesResponseType(typeof(IReadOnlyCollection<AttendanceCorrectionRequestResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetMyExceptions([FromQuery] int take = 30, CancellationToken cancellationToken = default)
+    {
+        var response = await attendanceService.GetMyCorrectionRequestsAsync(take, "MissedPunch", cancellationToken);
+        return Ok(response);
+    }
+
+    [HttpGet("exceptions")]
+    [Authorize(Policy = PermissionCodes.AttendanceManage)]
+    [ProducesResponseType(typeof(AttendanceCorrectionRequestListResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetExceptions(
+        [FromQuery] string? status,
+        [FromQuery] string? scope = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await attendanceService.GetCorrectionRequestsAsync(status, "MissedPunch", string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase), page, pageSize, cancellationToken);
+        return Ok(response);
+    }
+
+    [HttpGet("exceptions/{requestId:guid}")]
+    [Authorize(Policy = PermissionCodes.AttendanceManage)]
+    [ProducesResponseType(typeof(AttendanceExceptionDetailResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetExceptionDetail(Guid requestId, CancellationToken cancellationToken = default)
+    {
+        var response = await attendanceService.GetCorrectionRequestDetailAsync(requestId, cancellationToken);
+        return Ok(response);
+    }
+
+    [HttpPatch("exceptions/{requestId:guid}/review")]
+    [Authorize(Policy = PermissionCodes.AttendanceManage)]
+    [ProducesResponseType(typeof(AttendanceCorrectionRequestResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ReviewExceptionRequest(
         Guid requestId,
         [FromBody] AttendanceCorrectionReviewRequest request,
         CancellationToken cancellationToken)

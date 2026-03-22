@@ -43,6 +43,56 @@ public sealed class NotificationService(
         return new NotificationSummaryResponse(unreadCount, items);
     }
 
+    public async Task<EmailOutboxHealthResponse> GetEmailOutboxHealthAsync(CancellationToken cancellationToken = default)
+    {
+        var pendingCount = await dbContext.EmailOutboxMessages
+            .CountAsync(x => x.Status == "Pending", cancellationToken);
+        var sentCount = await dbContext.EmailOutboxMessages
+            .CountAsync(x => x.Status == "Sent", cancellationToken);
+        var failedCount = await dbContext.EmailOutboxMessages
+            .CountAsync(x => x.Status == "Failed", cancellationToken);
+
+        var oldestPendingCreatedAt = await dbContext.EmailOutboxMessages
+            .Where(x => x.Status == "Pending")
+            .OrderBy(x => x.CreatedAt)
+            .Select(x => (DateTimeOffset?)x.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var lastSentAt = await dbContext.EmailOutboxMessages
+            .Where(x => x.Status == "Sent" && x.SentAt != null)
+            .OrderByDescending(x => x.SentAt)
+            .Select(x => x.SentAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var lastFailedAt = await dbContext.EmailOutboxMessages
+            .Where(x => x.Status == "Failed" && x.LastAttemptAt != null)
+            .OrderByDescending(x => x.LastAttemptAt)
+            .Select(x => x.LastAttemptAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var recentFailures = await dbContext.EmailOutboxMessages
+            .Where(x => x.Status == "Failed")
+            .OrderByDescending(x => x.LastAttemptAt ?? x.UpdatedAt ?? x.CreatedAt)
+            .Take(10)
+            .Select(x => new EmailOutboxFailureSampleResponse(
+                x.Id,
+                x.ToEmail,
+                x.Subject,
+                x.AttemptCount,
+                x.LastAttemptAt,
+                x.LastError))
+            .ToListAsync(cancellationToken);
+
+        return new EmailOutboxHealthResponse(
+            pendingCount,
+            sentCount,
+            failedCount,
+            oldestPendingCreatedAt,
+            lastSentAt,
+            lastFailedAt,
+            recentFailures);
+    }
+
     public async Task MarkAsReadAsync(Guid notificationId, CancellationToken cancellationToken = default)
     {
         if (currentUserService.UserId is null)

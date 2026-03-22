@@ -1,3 +1,4 @@
+using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using TravelPax.Workforce.Application.Abstractions.CurrentUser;
@@ -10,12 +11,23 @@ public sealed class CurrentUserService(IHttpContextAccessor httpContextAccessor)
     {
         get
         {
-            var raw = httpContextAccessor.HttpContext?.User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var user = httpContextAccessor.HttpContext?.User;
+            var raw = user?.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? user?.FindFirstValue(JwtRegisteredClaimNames.Sub)
+                ?? user?.FindFirstValue("nameid");
             return Guid.TryParse(raw, out var userId) ? userId : null;
         }
     }
 
-    public string? Email => httpContextAccessor.HttpContext?.User.FindFirstValue(ClaimTypes.Email);
+    public string? Email
+    {
+        get
+        {
+            var user = httpContextAccessor.HttpContext?.User;
+            return user?.FindFirstValue(ClaimTypes.Email)
+                ?? user?.FindFirstValue(JwtRegisteredClaimNames.Email);
+        }
+    }
 
     public bool IsAuthenticated => httpContextAccessor.HttpContext?.User.Identity?.IsAuthenticated ?? false;
 }

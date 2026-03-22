@@ -4,6 +4,7 @@ using TravelPax.Workforce.Application.Abstractions.Attendance;
 using TravelPax.Workforce.Application.Abstractions.CurrentUser;
 using TravelPax.Workforce.Application.Abstractions.Networking;
 using TravelPax.Workforce.Contracts.Attendance;
+using TravelPax.Workforce.Domain.Constants;
 using TravelPax.Workforce.Domain.Entities;
 using TravelPax.Workforce.Infrastructure.Persistence;
 
@@ -46,8 +47,11 @@ public sealed class AttendanceService(
 
         var now = DateTimeOffset.UtcNow;
         var settings = await dbContext.CompanySettings.OrderBy(x => x.CreatedAt).FirstAsync(cancellationToken);
+        var shift = await ResolveShiftForUserDateAsync(user, today, cancellationToken);
+        var effectiveRules = await ResolveEffectiveRulesAsync(settings, user.BranchId, shift?.Id, shift, cancellationToken);
         var networkResult = await networkValidationService.ValidateAsync(user.BranchId, GetIpAddress(), cancellationToken);
-        var lateMinutes = CalculateLateMinutes(now, settings);
+        var ruleComputed = AttendanceRulesEngine.Evaluate(today, now, null, settings, shift, effectiveRules, GetBusinessDate());
+        var lateMinutes = ruleComputed.LateMinutes;
 
         var record = new AttendanceRecord
         {
@@ -107,13 +111,15 @@ public sealed class AttendanceService(
         var networkResult = await networkValidationService.ValidateAsync(user.BranchId, GetIpAddress(), cancellationToken);
 
         record.ClockOutAt = now;
-        record.TotalWorkMinutes = (int)Math.Round((now - record.ClockInAt.Value).TotalMinutes, MidpointRounding.AwayFromZero);
         record.ClockOutIp = GetIpAddress();
         record.ClockOutUserAgent = GetUserAgent();
         record.ClockOutDeviceSummary = GetUserAgent();
         record.ClockOutNetworkValidation = networkResult.Status;
         record.ClockOutNetworkRuleId = networkResult.MatchedRuleId;
-        record.Status = record.IsLate ? "Late" : "Present";
+        var settings = await GetCompanySettingsAsync(cancellationToken);
+        var shift = await ResolveShiftForUserDateAsync(user, record.AttendanceDate, cancellationToken);
+        var effectiveRules = await ResolveEffectiveRulesAsync(settings, user.BranchId, shift?.Id, shift, cancellationToken);
+        ApplyDerivedAttendanceState(record, null, settings, shift, effectiveRules);
         record.Notes = string.IsNullOrWhiteSpace(request.Notes) ? record.Notes : request.Notes;
         record.UpdatedAt = DateTimeOffset.UtcNow;
         record.UpdatedBy = user.Id;
@@ -178,7 +184,10 @@ public sealed class AttendanceService(
         record.ClockInAt = request.ClockInAt?.ToUniversalTime();
         record.ClockOutAt = request.ClockOutAt?.ToUniversalTime();
         record.Notes = request.Notes;
-        ApplyDerivedAttendanceState(record, request.Status, await GetCompanySettingsAsync(cancellationToken));
+        var settings = await GetCompanySettingsAsync(cancellationToken);
+        var shift = await ResolveShiftForUserDateAsync(record.User, record.AttendanceDate, cancellationToken);
+        var effectiveRules = await ResolveEffectiveRulesAsync(record.BranchId, shift?.Id, settings, shift, cancellationToken);
+        ApplyDerivedAttendanceState(record, request.Status, settings, shift, effectiveRules);
         record.UpdatedAt = DateTimeOffset.UtcNow;
         record.UpdatedBy = actor.Id;
 
@@ -231,7 +240,10 @@ public sealed class AttendanceService(
         record.ClockInAt = request.ClockInAt.Value.ToUniversalTime();
         record.ClockOutAt = request.ClockOutAt?.ToUniversalTime();
         record.Notes = request.Notes;
-        ApplyDerivedAttendanceState(record, null, await GetCompanySettingsAsync(cancellationToken));
+        var settings = await GetCompanySettingsAsync(cancellationToken);
+        var shift = await ResolveShiftForUserDateAsync(record.User, record.AttendanceDate, cancellationToken);
+        var effectiveRules = await ResolveEffectiveRulesAsync(record.BranchId, shift?.Id, settings, shift, cancellationToken);
+        ApplyDerivedAttendanceState(record, null, settings, shift, effectiveRules);
         record.UpdatedAt = DateTimeOffset.UtcNow;
         record.UpdatedBy = actor.Id;
 
@@ -287,6 +299,7 @@ public sealed class AttendanceService(
             Id = Guid.NewGuid(),
             AttendanceRecordId = attendanceId,
             RequestedByUserId = actor.Id,
+            RequestType = NormalizeRequestType(request.RequestType),
             RequestedClockInAt = request.ClockInAt.ToUniversalTime(),
             RequestedClockOutAt = request.ClockOutAt?.ToUniversalTime(),
             RequestedNotes = request.Notes,
@@ -319,14 +332,23 @@ public sealed class AttendanceService(
 
     public async Task<IReadOnlyCollection<AttendanceCorrectionRequestResponse>> GetMyCorrectionRequestsAsync(
         int take,
+        string? requestType,
         CancellationToken cancellationToken = default)
     {
         var actor = await GetCurrentUserEntityAsync(cancellationToken);
-        var items = await dbContext.AttendanceCorrectionRequests
+        var query = dbContext.AttendanceCorrectionRequests
             .Include(x => x.AttendanceRecord)
             .Include(x => x.RequestedByUser)
             .Include(x => x.ReviewedByUser)
             .Where(x => x.RequestedByUserId == actor.Id)
+            .AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(requestType))
+        {
+            query = query.Where(x => x.RequestType == requestType);
+        }
+
+        var items = await query
             .OrderByDescending(x => x.CreatedAt)
             .Take(Math.Clamp(take, 1, 90))
             .ToListAsync(cancellationToken);
@@ -336,6 +358,8 @@ public sealed class AttendanceService(
 
     public async Task<AttendanceCorrectionRequestListResponse> GetCorrectionRequestsAsync(
         string? status,
+        string? requestType,
+        bool teamOnly,
         int page,
         int pageSize,
         CancellationToken cancellationToken = default)
@@ -354,6 +378,27 @@ public sealed class AttendanceService(
             query = query.Where(x => x.Status == status);
         }
 
+        if (!string.IsNullOrWhiteSpace(requestType))
+        {
+            query = query.Where(x => x.RequestType == requestType);
+        }
+
+        var actor = await GetCurrentUserEntityAsync(cancellationToken);
+        var roleCodes = await (
+            from userRole in dbContext.UserRoles
+            join role in dbContext.Roles on userRole.RoleId equals role.Id
+            where userRole.UserId == actor.Id
+            select role.Code)
+            .ToArrayAsync(cancellationToken);
+
+        var managerScopedRole = roleCodes.Contains(RoleCodes.TeamLead) || roleCodes.Contains(RoleCodes.OperationsManager);
+        var applyTeamScope = teamOnly || managerScopedRole;
+
+        if (applyTeamScope)
+        {
+            query = query.Where(x => x.RequestedByUser.ReportingManagerId == actor.Id);
+        }
+
         var total = await query.CountAsync(cancellationToken);
         var items = await query
             .OrderByDescending(x => x.CreatedAt)
@@ -362,6 +407,47 @@ public sealed class AttendanceService(
             .ToListAsync(cancellationToken);
 
         return new AttendanceCorrectionRequestListResponse(items.Select(MapCorrection).ToArray(), total);
+    }
+
+    public async Task<AttendanceExceptionDetailResponse> GetCorrectionRequestDetailAsync(
+        Guid requestId,
+        CancellationToken cancellationToken = default)
+    {
+        var item = await dbContext.AttendanceCorrectionRequests
+            .Include(x => x.AttendanceRecord)
+            .Include(x => x.RequestedByUser)
+            .Include(x => x.ReviewedByUser)
+            .FirstOrDefaultAsync(x => x.Id == requestId, cancellationToken)
+            ?? throw new InvalidOperationException("Correction request not found.");
+
+        var timeline = new List<AttendanceExceptionTimelineEventResponse>
+        {
+            new(
+                item.CreatedAt,
+                "Requested",
+                item.RequestedByUser.DisplayName,
+                item.Reason)
+        };
+
+        if (item.ReviewedAt is not null)
+        {
+            timeline.Add(new AttendanceExceptionTimelineEventResponse(
+                item.ReviewedAt.Value,
+                item.Status == "Approved" ? "Approved" : "Rejected",
+                item.ReviewedByUser?.DisplayName ?? "Reviewer",
+                item.ReviewerNote));
+        }
+
+        if (item.Status == "Approved")
+        {
+            timeline.Add(new AttendanceExceptionTimelineEventResponse(
+                item.UpdatedAt ?? item.ReviewedAt ?? item.CreatedAt,
+                "AttendanceLinked",
+                "System",
+                $"Linked to attendance record {item.AttendanceRecordId}"));
+        }
+
+        return new AttendanceExceptionDetailResponse(MapCorrection(item), timeline.OrderBy(x => x.At).ToArray());
     }
 
     public async Task<AttendanceCorrectionRequestResponse> ReviewCorrectionRequestAsync(
@@ -402,7 +488,10 @@ public sealed class AttendanceService(
             record.ClockInAt = item.RequestedClockInAt;
             record.ClockOutAt = item.RequestedClockOutAt;
             record.Notes = item.RequestedNotes;
-            ApplyDerivedAttendanceState(record, null, await GetCompanySettingsAsync(cancellationToken));
+            var settings = await GetCompanySettingsAsync(cancellationToken);
+            var shift = await ResolveShiftForUserDateAsync(record.User, record.AttendanceDate, cancellationToken);
+            var effectiveRules = await ResolveEffectiveRulesAsync(record.BranchId, shift?.Id, settings, shift, cancellationToken);
+            ApplyDerivedAttendanceState(record, null, settings, shift, effectiveRules);
             record.UpdatedAt = DateTimeOffset.UtcNow;
             record.UpdatedBy = actor.Id;
 
@@ -509,32 +598,54 @@ public sealed class AttendanceService(
             .FirstOrDefaultAsync(x => x.UserId == userId && x.AttendanceDate == attendanceDate, cancellationToken);
     }
 
-    private static int CalculateLateMinutes(DateTimeOffset now, CompanySetting settings)
-    {
-        var localNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(now, TimezoneId);
-        var scheduled = new DateTimeOffset(localNow.Year, localNow.Month, localNow.Day, settings.WorkingDayStartTime.Hour, settings.WorkingDayStartTime.Minute, 0, localNow.Offset)
-            .AddMinutes(settings.LateGraceMinutes);
-
-        return localNow <= scheduled ? 0 : (int)Math.Round((localNow - scheduled).TotalMinutes, MidpointRounding.AwayFromZero);
-    }
-
     private async Task<CompanySetting> GetCompanySettingsAsync(CancellationToken cancellationToken)
     {
         return await dbContext.CompanySettings.OrderBy(x => x.CreatedAt).FirstAsync(cancellationToken);
     }
 
-    private static void ApplyDerivedAttendanceState(AttendanceRecord record, string? requestedStatus, CompanySetting settings)
+    private async Task<AttendanceRulesEngine.EffectiveAttendanceRules> ResolveEffectiveRulesAsync(
+        CompanySetting settings,
+        Guid? branchId,
+        Guid? shiftId,
+        ShiftDefinition? shift,
+        CancellationToken cancellationToken)
     {
-        record.TotalWorkMinutes = record.ClockInAt is not null && record.ClockOutAt is not null
-            ? (int)Math.Round((record.ClockOutAt.Value - record.ClockInAt.Value).TotalMinutes, MidpointRounding.AwayFromZero)
-            : null;
+        var profiles = await dbContext.AttendanceRuleProfiles
+            .Where(x => x.IsActive)
+            .ToListAsync(cancellationToken);
+        var matchedProfile = AttendanceRulesEngine.ResolveBestProfile(profiles, branchId, shiftId);
+        return AttendanceRulesEngine.BuildEffectiveRules(settings, shift, matchedProfile);
+    }
 
-        var lateMinutes = record.ClockInAt is not null
-            ? CalculateLateMinutesForInstant(record.ClockInAt.Value, settings)
-            : 0;
+    private async Task<AttendanceRulesEngine.EffectiveAttendanceRules> ResolveEffectiveRulesAsync(
+        Guid? branchId,
+        Guid? shiftId,
+        CompanySetting settings,
+        ShiftDefinition? shift,
+        CancellationToken cancellationToken)
+    {
+        return await ResolveEffectiveRulesAsync(settings, branchId, shiftId, shift, cancellationToken);
+    }
 
-        record.IsLate = lateMinutes > 0;
-        record.LateMinutes = lateMinutes > 0 ? lateMinutes : null;
+    private static void ApplyDerivedAttendanceState(
+        AttendanceRecord record,
+        string? requestedStatus,
+        CompanySetting settings,
+        ShiftDefinition? shift,
+        AttendanceRulesEngine.EffectiveAttendanceRules effectiveRules)
+    {
+        var computed = AttendanceRulesEngine.Evaluate(
+            record.AttendanceDate,
+            record.ClockInAt,
+            record.ClockOutAt,
+            settings,
+            shift,
+            effectiveRules,
+            GetBusinessDate());
+
+        record.TotalWorkMinutes = computed.TotalWorkMinutes;
+        record.IsLate = computed.IsLate;
+        record.LateMinutes = computed.LateMinutes > 0 ? computed.LateMinutes : null;
 
         if (!string.IsNullOrWhiteSpace(requestedStatus))
         {
@@ -542,27 +653,47 @@ public sealed class AttendanceService(
             return;
         }
 
-        record.Status = record.ClockOutAt is null
-            ? "PendingClockOut"
-            : record.IsLate ? "Late" : "Present";
-    }
-
-    private static int CalculateLateMinutesForInstant(DateTimeOffset instant, CompanySetting settings)
-    {
-        var localTime = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(instant, TimezoneId);
-        var scheduled = new DateTimeOffset(
-            localTime.Year,
-            localTime.Month,
-            localTime.Day,
-            settings.WorkingDayStartTime.Hour,
-            settings.WorkingDayStartTime.Minute,
-            0,
-            localTime.Offset).AddMinutes(settings.LateGraceMinutes);
-
-        return localTime <= scheduled ? 0 : (int)Math.Round((localTime - scheduled).TotalMinutes, MidpointRounding.AwayFromZero);
+        record.Status = computed.SuggestedStatus;
     }
 
     private static DateOnly GetBusinessDate() => DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTime.UtcNow, TimezoneId));
+
+    private async Task<ShiftDefinition?> ResolveShiftForUserDateAsync(AppUser user, DateOnly date, CancellationToken cancellationToken)
+    {
+        var overrideShiftId = await dbContext.ShiftOverrides
+            .Where(x => x.UserId == user.Id && x.Date == date && x.Status == "Approved")
+            .Select(x => (Guid?)x.ShiftId)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (overrideShiftId is not null)
+        {
+            return await dbContext.ShiftDefinitions.FirstOrDefaultAsync(x => x.Id == overrideShiftId.Value && x.IsActive, cancellationToken);
+        }
+
+        var directShiftId = await dbContext.EmployeeShiftAssignments
+            .Where(x => x.UserId == user.Id && x.IsActive && x.EffectiveFrom <= date && (x.EffectiveTo == null || x.EffectiveTo >= date))
+            .OrderByDescending(x => x.EffectiveFrom)
+            .Select(x => (Guid?)x.ShiftId)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (directShiftId is not null)
+        {
+            return await dbContext.ShiftDefinitions.FirstOrDefaultAsync(x => x.Id == directShiftId.Value && x.IsActive, cancellationToken);
+        }
+
+        var ruleShiftId = await dbContext.ShiftAssignmentRules
+            .Where(x =>
+                x.IsActive
+                && x.EffectiveFrom <= date
+                && (x.EffectiveTo == null || x.EffectiveTo >= date)
+                && (x.BranchId == null || x.BranchId == user.BranchId)
+                && (x.Department == null || x.Department == user.Department))
+            .OrderBy(x => x.Priority)
+            .Select(x => (Guid?)x.ShiftId)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return ruleShiftId is null
+            ? null
+            : await dbContext.ShiftDefinitions.FirstOrDefaultAsync(x => x.Id == ruleShiftId.Value && x.IsActive, cancellationToken);
+    }
 
     private async Task EnsureAttendanceDateUnlockedAsync(DateOnly attendanceDate, Guid? branchId, CancellationToken cancellationToken)
     {
@@ -673,6 +804,7 @@ public sealed class AttendanceService(
             item.RequestedByUserId,
             item.RequestedByUser.DisplayName,
             item.AttendanceRecord.AttendanceDate,
+            item.RequestType,
             item.RequestedClockInAt,
             item.RequestedClockOutAt,
             item.RequestedNotes,
@@ -683,5 +815,21 @@ public sealed class AttendanceService(
             item.ReviewedByUser?.DisplayName,
             item.ReviewedAt,
             item.ReviewerNote);
+    }
+
+    private static string NormalizeRequestType(string? requestType)
+    {
+        if (string.IsNullOrWhiteSpace(requestType))
+        {
+            return "Correction";
+        }
+
+        return requestType.Trim() switch
+        {
+            "MissedPunch" => "MissedPunch",
+            "MissedClockIn" => "MissedPunch",
+            "MissedClockOut" => "MissedPunch",
+            _ => "Correction"
+        };
     }
 }

@@ -6,6 +6,7 @@ using TravelPax.Workforce.Application.Abstractions.Settings;
 using TravelPax.Workforce.Contracts.Settings;
 using TravelPax.Workforce.Domain.Constants;
 using TravelPax.Workforce.Domain.Entities;
+using TravelPax.Workforce.Infrastructure.Attendance;
 using TravelPax.Workforce.Infrastructure.Persistence;
 
 namespace TravelPax.Workforce.Infrastructure.Settings;
@@ -598,6 +599,275 @@ public sealed class SettingsService(
         return MapPayrollFinalization(entity);
     }
 
+    public async Task<IReadOnlyCollection<AttendanceRuleProfileResponse>> GetAttendanceRuleProfilesAsync(CancellationToken cancellationToken = default)
+    {
+        var rules = await dbContext.AttendanceRuleProfiles
+            .Include(x => x.Branch)
+            .Include(x => x.Shift)
+            .OrderBy(x => x.ScopeType == "Shift" ? 0 : x.ScopeType == "Branch" ? 1 : 2)
+            .ThenBy(x => x.Priority)
+            .ThenBy(x => x.Name)
+            .ToListAsync(cancellationToken);
+
+        return rules.Select(MapAttendanceRuleProfile).ToArray();
+    }
+
+    public async Task<AttendanceRuleProfileResponse> CreateAttendanceRuleProfileAsync(
+        UpsertAttendanceRuleProfileRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var actor = currentUserService.UserId ?? throw new UnauthorizedAccessException("User is not authenticated.");
+        var normalizedScope = NormalizeScope(request.ScopeType);
+        var (branch, shift) = await ValidateScopeReferencesAsync(normalizedScope, request.BranchId, request.ShiftId, cancellationToken);
+
+        var entity = new AttendanceRuleProfile
+        {
+            Id = Guid.NewGuid(),
+            Name = request.Name.Trim(),
+            ScopeType = normalizedScope,
+            BranchId = branch?.Id,
+            ShiftId = shift?.Id,
+            Priority = Math.Clamp(request.Priority, 1, 9999),
+            IsActive = request.IsActive,
+            LateGraceMinutes = NormalizeNullableNonNegative(request.LateGraceMinutes),
+            HalfDayThresholdMinutes = NormalizeNullableNonNegative(request.HalfDayThresholdMinutes),
+            MinPresentMinutes = NormalizeNullableNonNegative(request.MinPresentMinutes),
+            OvertimeThresholdMinutes = NormalizeNullableNonNegative(request.OvertimeThresholdMinutes),
+            EarlyOutGraceMinutes = NormalizeNullableNonNegative(request.EarlyOutGraceMinutes),
+            ShortLeaveDeductionMinutes = NormalizeNullableNonNegative(request.ShortLeaveDeductionMinutes),
+            EnableMissedPunchDetection = request.EnableMissedPunchDetection,
+            CreatedBy = actor,
+            UpdatedBy = actor,
+            Branch = branch,
+            Shift = shift
+        };
+
+        dbContext.AttendanceRuleProfiles.Add(entity);
+        dbContext.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = actor,
+            Action = "AttendanceRuleProfileCreated",
+            Module = "Attendance",
+            EntityName = nameof(AttendanceRuleProfile),
+            EntityId = entity.Id.ToString(),
+            NewValues = $"Name={entity.Name};Scope={entity.ScopeType};BranchId={entity.BranchId};ShiftId={entity.ShiftId};Priority={entity.Priority};Active={entity.IsActive}"
+        });
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return MapAttendanceRuleProfile(entity);
+    }
+
+    public async Task<AttendanceRuleProfileResponse> UpdateAttendanceRuleProfileAsync(
+        Guid ruleId,
+        UpsertAttendanceRuleProfileRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var actor = currentUserService.UserId ?? throw new UnauthorizedAccessException("User is not authenticated.");
+        var entity = await dbContext.AttendanceRuleProfiles
+            .Include(x => x.Branch)
+            .Include(x => x.Shift)
+            .FirstOrDefaultAsync(x => x.Id == ruleId, cancellationToken)
+            ?? throw new InvalidOperationException("Attendance rule profile not found.");
+
+        var normalizedScope = NormalizeScope(request.ScopeType);
+        var (branch, shift) = await ValidateScopeReferencesAsync(normalizedScope, request.BranchId, request.ShiftId, cancellationToken);
+        var oldValues = $"Name={entity.Name};Scope={entity.ScopeType};BranchId={entity.BranchId};ShiftId={entity.ShiftId};Priority={entity.Priority};Active={entity.IsActive}";
+
+        entity.Name = request.Name.Trim();
+        entity.ScopeType = normalizedScope;
+        entity.BranchId = branch?.Id;
+        entity.ShiftId = shift?.Id;
+        entity.Priority = Math.Clamp(request.Priority, 1, 9999);
+        entity.IsActive = request.IsActive;
+        entity.LateGraceMinutes = NormalizeNullableNonNegative(request.LateGraceMinutes);
+        entity.HalfDayThresholdMinutes = NormalizeNullableNonNegative(request.HalfDayThresholdMinutes);
+        entity.MinPresentMinutes = NormalizeNullableNonNegative(request.MinPresentMinutes);
+        entity.OvertimeThresholdMinutes = NormalizeNullableNonNegative(request.OvertimeThresholdMinutes);
+        entity.EarlyOutGraceMinutes = NormalizeNullableNonNegative(request.EarlyOutGraceMinutes);
+        entity.ShortLeaveDeductionMinutes = NormalizeNullableNonNegative(request.ShortLeaveDeductionMinutes);
+        entity.EnableMissedPunchDetection = request.EnableMissedPunchDetection;
+        entity.UpdatedAt = DateTimeOffset.UtcNow;
+        entity.UpdatedBy = actor;
+        entity.Branch = branch;
+        entity.Shift = shift;
+
+        dbContext.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = actor,
+            Action = "AttendanceRuleProfileUpdated",
+            Module = "Attendance",
+            EntityName = nameof(AttendanceRuleProfile),
+            EntityId = entity.Id.ToString(),
+            OldValues = oldValues,
+            NewValues = $"Name={entity.Name};Scope={entity.ScopeType};BranchId={entity.BranchId};ShiftId={entity.ShiftId};Priority={entity.Priority};Active={entity.IsActive}"
+        });
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return MapAttendanceRuleProfile(entity);
+    }
+
+    public async Task<AttendanceRulePreviewResponse> PreviewAttendanceRuleAsync(
+        AttendanceRulePreviewRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var company = await GetCompanyEntityAsync(cancellationToken);
+
+        ShiftDefinition? shift = null;
+        if (request.ShiftId is not null)
+        {
+            shift = await dbContext.ShiftDefinitions.FirstOrDefaultAsync(x => x.Id == request.ShiftId.Value, cancellationToken)
+                ?? throw new InvalidOperationException("Shift not found.");
+        }
+
+        var profiles = await dbContext.AttendanceRuleProfiles
+            .Include(x => x.Branch)
+            .Include(x => x.Shift)
+            .Where(x => x.IsActive)
+            .ToListAsync(cancellationToken);
+
+        var profile = AttendanceRulesEngine.ResolveBestProfile(profiles, request.BranchId, request.ShiftId);
+        var rules = AttendanceRulesEngine.BuildEffectiveRules(company, shift, profile);
+        var businessDate = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTime.UtcNow, company.DefaultTimezone ?? AttendanceRulesEngine.DefaultTimezone));
+        var computed = AttendanceRulesEngine.Evaluate(
+            request.AttendanceDate,
+            request.ClockInAt,
+            request.ClockOutAt,
+            company,
+            shift,
+            rules,
+            businessDate);
+
+        return new AttendanceRulePreviewResponse(
+            computed.SuggestedStatus,
+            computed.TotalWorkMinutes,
+            computed.IsLate,
+            computed.LateMinutes,
+            computed.IsEarlyOut,
+            computed.EarlyOutMinutes,
+            computed.IsOvertime,
+            computed.OvertimeMinutes,
+            computed.IsMissedPunch,
+            profile?.Id,
+            profile?.Name ?? "Default Company/Shift Rules",
+            profile?.ScopeType ?? "SystemDefault");
+    }
+
+    public async Task<IReadOnlyCollection<WorkCalendarEntryResponse>> GetWorkCalendarEntriesAsync(
+        int year,
+        int month,
+        Guid? branchId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateYearMonth(year, month);
+
+        if (branchId is not null)
+        {
+            var branchExists = await dbContext.OfficeBranches.AnyAsync(x => x.Id == branchId.Value, cancellationToken);
+            if (!branchExists)
+            {
+                throw new InvalidOperationException("Branch not found.");
+            }
+        }
+
+        var query = dbContext.WorkCalendarEntries
+            .Include(x => x.Branch)
+            .AsQueryable();
+
+        if (branchId is not null)
+        {
+            query = query.Where(x => x.BranchId == null || x.BranchId == branchId.Value);
+        }
+
+        query = query.Where(x =>
+            (!x.IsRecurringAnnual && x.CalendarDate.Year == year && x.CalendarDate.Month == month)
+            || (x.IsRecurringAnnual && x.CalendarDate.Month == month));
+
+        var items = await query
+            .OrderBy(x => x.CalendarDate.Month)
+            .ThenBy(x => x.CalendarDate.Day)
+            .ThenBy(x => x.Name)
+            .ToListAsync(cancellationToken);
+
+        return items.Select(MapWorkCalendarEntry).ToArray();
+    }
+
+    public async Task<WorkCalendarEntryResponse> CreateWorkCalendarEntryAsync(
+        UpsertWorkCalendarEntryRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var actor = currentUserService.UserId ?? throw new UnauthorizedAccessException("User is not authenticated.");
+        var (branch, normalizedDayType, normalizedName, normalizedNotes) = await ValidateWorkCalendarInputAsync(request, cancellationToken);
+
+        var entity = new WorkCalendarEntry
+        {
+            Id = Guid.NewGuid(),
+            BranchId = branch?.Id,
+            Branch = branch,
+            CalendarDate = request.CalendarDate,
+            DayType = normalizedDayType,
+            Name = normalizedName,
+            IsRecurringAnnual = request.IsRecurringAnnual,
+            IsActive = request.IsActive,
+            Notes = normalizedNotes,
+            CreatedBy = actor,
+            UpdatedBy = actor
+        };
+
+        dbContext.WorkCalendarEntries.Add(entity);
+        dbContext.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = actor,
+            Action = "WorkCalendarEntryCreated",
+            Module = "Settings",
+            EntityName = nameof(WorkCalendarEntry),
+            EntityId = entity.Id.ToString(),
+            NewValues = $"BranchId={entity.BranchId};Date={entity.CalendarDate};Type={entity.DayType};Name={entity.Name};Recurring={entity.IsRecurringAnnual};Active={entity.IsActive}"
+        });
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return MapWorkCalendarEntry(entity);
+    }
+
+    public async Task<WorkCalendarEntryResponse> UpdateWorkCalendarEntryAsync(
+        Guid entryId,
+        UpsertWorkCalendarEntryRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var actor = currentUserService.UserId ?? throw new UnauthorizedAccessException("User is not authenticated.");
+        var entity = await dbContext.WorkCalendarEntries
+            .Include(x => x.Branch)
+            .FirstOrDefaultAsync(x => x.Id == entryId, cancellationToken)
+            ?? throw new InvalidOperationException("Work calendar entry not found.");
+
+        var (branch, normalizedDayType, normalizedName, normalizedNotes) = await ValidateWorkCalendarInputAsync(request, cancellationToken);
+        var oldValues = $"BranchId={entity.BranchId};Date={entity.CalendarDate};Type={entity.DayType};Name={entity.Name};Recurring={entity.IsRecurringAnnual};Active={entity.IsActive}";
+
+        entity.BranchId = branch?.Id;
+        entity.Branch = branch;
+        entity.CalendarDate = request.CalendarDate;
+        entity.DayType = normalizedDayType;
+        entity.Name = normalizedName;
+        entity.IsRecurringAnnual = request.IsRecurringAnnual;
+        entity.IsActive = request.IsActive;
+        entity.Notes = normalizedNotes;
+        entity.UpdatedAt = DateTimeOffset.UtcNow;
+        entity.UpdatedBy = actor;
+
+        dbContext.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = actor,
+            Action = "WorkCalendarEntryUpdated",
+            Module = "Settings",
+            EntityName = nameof(WorkCalendarEntry),
+            EntityId = entity.Id.ToString(),
+            OldValues = oldValues,
+            NewValues = $"BranchId={entity.BranchId};Date={entity.CalendarDate};Type={entity.DayType};Name={entity.Name};Recurring={entity.IsRecurringAnnual};Active={entity.IsActive}"
+        });
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return MapWorkCalendarEntry(entity);
+    }
+
     private async Task<CompanySetting> GetCompanyEntityAsync(CancellationToken cancellationToken)
     {
         return await dbContext.CompanySettings.OrderBy(x => x.CreatedAt).FirstAsync(cancellationToken);
@@ -665,6 +935,139 @@ public sealed class SettingsService(
             item.ReopenedByUserId,
             item.SnapshotJson,
             item.Notes);
+    }
+
+    private static AttendanceRuleProfileResponse MapAttendanceRuleProfile(AttendanceRuleProfile item)
+    {
+        return new AttendanceRuleProfileResponse(
+            item.Id,
+            item.Name,
+            item.ScopeType,
+            item.BranchId,
+            item.Branch?.Name,
+            item.ShiftId,
+            item.Shift?.Name,
+            item.Priority,
+            item.IsActive,
+            item.LateGraceMinutes,
+            item.HalfDayThresholdMinutes,
+            item.MinPresentMinutes,
+            item.OvertimeThresholdMinutes,
+            item.EarlyOutGraceMinutes,
+            item.ShortLeaveDeductionMinutes,
+            item.EnableMissedPunchDetection);
+    }
+
+    private static WorkCalendarEntryResponse MapWorkCalendarEntry(WorkCalendarEntry item)
+    {
+        return new WorkCalendarEntryResponse(
+            item.Id,
+            item.BranchId,
+            item.Branch?.Name ?? "Global Template",
+            item.CalendarDate,
+            item.DayType,
+            item.Name,
+            item.IsRecurringAnnual,
+            item.IsActive,
+            item.Notes);
+    }
+
+    private async Task<(OfficeBranch? branch, ShiftDefinition? shift)> ValidateScopeReferencesAsync(
+        string scopeType,
+        Guid? branchId,
+        Guid? shiftId,
+        CancellationToken cancellationToken)
+    {
+        OfficeBranch? branch = null;
+        ShiftDefinition? shift = null;
+
+        if (scopeType == "Global")
+        {
+            return (null, null);
+        }
+
+        if (scopeType == "Branch")
+        {
+            if (branchId is null)
+            {
+                throw new InvalidOperationException("Branch scope requires branch selection.");
+            }
+
+            branch = await dbContext.OfficeBranches.FirstOrDefaultAsync(x => x.Id == branchId.Value, cancellationToken)
+                ?? throw new InvalidOperationException("Branch not found.");
+            return (branch, null);
+        }
+
+        if (shiftId is null)
+        {
+            throw new InvalidOperationException("Shift scope requires shift selection.");
+        }
+
+        shift = await dbContext.ShiftDefinitions.FirstOrDefaultAsync(x => x.Id == shiftId.Value, cancellationToken)
+            ?? throw new InvalidOperationException("Shift not found.");
+
+        return (null, shift);
+    }
+
+    private static string NormalizeScope(string scopeType)
+    {
+        var value = scopeType?.Trim().ToLowerInvariant();
+        return value switch
+        {
+            "global" => "Global",
+            "branch" => "Branch",
+            "shift" => "Shift",
+            _ => throw new InvalidOperationException("Scope type must be Global, Branch, or Shift.")
+        };
+    }
+
+    private static int? NormalizeNullableNonNegative(int? value) => value is null ? null : Math.Max(value.Value, 0);
+
+    private async Task<(OfficeBranch? branch, string dayType, string name, string? notes)> ValidateWorkCalendarInputAsync(
+        UpsertWorkCalendarEntryRequest request,
+        CancellationToken cancellationToken)
+    {
+        OfficeBranch? branch = null;
+        if (request.BranchId is not null)
+        {
+            branch = await dbContext.OfficeBranches.FirstOrDefaultAsync(x => x.Id == request.BranchId.Value, cancellationToken)
+                ?? throw new InvalidOperationException("Branch not found.");
+        }
+
+        var normalizedDayType = NormalizeWorkCalendarDayType(request.DayType);
+        if (string.IsNullOrWhiteSpace(request.Name))
+        {
+            throw new InvalidOperationException("Entry name is required.");
+        }
+
+        var normalizedName = request.Name.Trim();
+        var normalizedNotes = NormalizeNullable(request.Notes);
+        return (branch, normalizedDayType, normalizedName, normalizedNotes);
+    }
+
+    private static string NormalizeWorkCalendarDayType(string value)
+    {
+        var normalized = value?.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "publicholiday" => "PublicHoliday",
+            "customnonworkingday" => "CustomNonWorkingDay",
+            "specialworkingday" => "SpecialWorkingDay",
+            _ => throw new InvalidOperationException("Day type must be PublicHoliday, CustomNonWorkingDay, or SpecialWorkingDay.")
+        };
+    }
+
+    private static void ValidateYearMonth(int year, int month)
+    {
+        if (year is < 2000 or > 2100)
+        {
+            throw new InvalidOperationException("Year must be between 2000 and 2100.");
+        }
+
+        if (month is < 1 or > 12)
+        {
+            throw new InvalidOperationException("Month must be between 1 and 12.");
+        }
     }
 
     private static string? NormalizeNullable(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

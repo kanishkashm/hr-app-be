@@ -42,6 +42,26 @@ public sealed class IdentitySeeder(
             });
         }
 
+        var attendanceRuleProfilesTableExists = await TableExistsAsync("attendance_rule_profiles", cancellationToken);
+        if (attendanceRuleProfilesTableExists && !await dbContext.AttendanceRuleProfiles.AnyAsync(cancellationToken))
+        {
+            dbContext.AttendanceRuleProfiles.Add(new AttendanceRuleProfile
+            {
+                Id = Guid.NewGuid(),
+                Name = "Default Global Rules",
+                ScopeType = "Global",
+                Priority = 100,
+                IsActive = true,
+                LateGraceMinutes = 15,
+                HalfDayThresholdMinutes = 240,
+                MinPresentMinutes = 480,
+                OvertimeThresholdMinutes = 540,
+                EarlyOutGraceMinutes = 0,
+                ShortLeaveDeductionMinutes = 60,
+                EnableMissedPunchDetection = true
+            });
+        }
+
         if (!await dbContext.LeavePolicies.AnyAsync(cancellationToken))
         {
             dbContext.LeavePolicies.AddRange(
@@ -102,6 +122,8 @@ public sealed class IdentitySeeder(
                 PermissionCodes.LeaveRequest,
                 PermissionCodes.LeaveView,
                 PermissionCodes.LeaveManage,
+                PermissionCodes.ShiftsView,
+                PermissionCodes.ShiftsManage,
                 PermissionCodes.UsersView,
                 PermissionCodes.UsersCreate,
                 PermissionCodes.UsersEdit,
@@ -109,8 +131,8 @@ public sealed class IdentitySeeder(
                 PermissionCodes.AuditView,
                 PermissionCodes.SettingsManage
             ],
-            [RoleCodes.OperationsManager] = [PermissionCodes.AttendanceView, PermissionCodes.AttendanceManage, PermissionCodes.ReportsView, PermissionCodes.LeaveRequest, PermissionCodes.LeaveView],
-            [RoleCodes.TeamLead] = [PermissionCodes.AttendanceView, PermissionCodes.ReportsView, PermissionCodes.LeaveRequest, PermissionCodes.LeaveView],
+            [RoleCodes.OperationsManager] = [PermissionCodes.AttendanceView, PermissionCodes.AttendanceManage, PermissionCodes.ReportsView, PermissionCodes.LeaveRequest, PermissionCodes.LeaveView, PermissionCodes.ShiftsView],
+            [RoleCodes.TeamLead] = [PermissionCodes.AttendanceView, PermissionCodes.ReportsView, PermissionCodes.LeaveRequest, PermissionCodes.LeaveView, PermissionCodes.ShiftsView],
             [RoleCodes.Employee] = [PermissionCodes.AttendanceClock, PermissionCodes.LeaveRequest]
         };
 
@@ -253,5 +275,32 @@ public sealed class IdentitySeeder(
         }
 
         return user;
+    }
+
+    private async Task<bool> TableExistsAsync(string tableName, CancellationToken cancellationToken)
+    {
+        var connection = dbContext.Database.GetDbConnection();
+        if (connection.State != System.Data.ConnectionState.Open)
+        {
+            await connection.OpenAsync(cancellationToken);
+        }
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name = @tableName
+            );
+            """;
+
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = "@tableName";
+        parameter.Value = tableName;
+        command.Parameters.Add(parameter);
+
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return result is bool exists && exists;
     }
 }

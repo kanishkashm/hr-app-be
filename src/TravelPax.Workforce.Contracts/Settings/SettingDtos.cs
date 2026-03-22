@@ -113,3 +113,77 @@ public sealed record PayrollPeriodFinalizationResponse(
 public sealed record ReopenPayrollPeriodRequest(
     string Reason,
     bool UnlockAttendanceLock = true);
+
+public sealed record AttendanceRuleProfileResponse(
+    Guid Id,
+    string Name,
+    string ScopeType,
+    Guid? BranchId,
+    string? BranchName,
+    Guid? ShiftId,
+    string? ShiftName,
+    int Priority,
+    bool IsActive,
+    int? LateGraceMinutes,
+    int? HalfDayThresholdMinutes,
+    int? MinPresentMinutes,
+    int? OvertimeThresholdMinutes,
+    int? EarlyOutGraceMinutes,
+    int? ShortLeaveDeductionMinutes,
+    bool EnableMissedPunchDetection);
+
+public sealed record UpsertAttendanceRuleProfileRequest(
+    string Name,
+    string ScopeType,
+    Guid? BranchId,
+    Guid? ShiftId,
+    int Priority,
+    bool IsActive,
+    int? LateGraceMinutes,
+    int? HalfDayThresholdMinutes,
+    int? MinPresentMinutes,
+    int? OvertimeThresholdMinutes,
+    int? EarlyOutGraceMinutes,
+    int? ShortLeaveDeductionMinutes,
+    bool EnableMissedPunchDetection);
+
+public sealed record AttendanceRulePreviewRequest(
+    DateOnly AttendanceDate,
+    DateTimeOffset? ClockInAt,
+    DateTimeOffset? ClockOutAt,
+    Guid? BranchId,
+    Guid? ShiftId);
+
+public sealed record AttendanceRulePreviewResponse(
+    string SuggestedStatus,
+    int? TotalWorkMinutes,
+    bool IsLate,
+    int LateMinutes,
+    bool IsEarlyOut,
+    int EarlyOutMinutes,
+    bool IsOvertime,
+    int OvertimeMinutes,
+    bool IsMissedPunch,
+    Guid? RuleProfileId,
+    string RuleProfileName,
+    string RuleScopeType);
+
+public sealed record WorkCalendarEntryResponse(
+    Guid Id,
+    Guid? BranchId,
+    string BranchName,
+    DateOnly CalendarDate,
+    string DayType,
+    string Name,
+    bool IsRecurringAnnual,
+    bool IsActive,
+    string? Notes);
+
+public sealed record UpsertWorkCalendarEntryRequest(
+    Guid? BranchId,
+    DateOnly CalendarDate,
+    string DayType,
+    string Name,
+    bool IsRecurringAnnual,
+    bool IsActive,
+    string? Notes);

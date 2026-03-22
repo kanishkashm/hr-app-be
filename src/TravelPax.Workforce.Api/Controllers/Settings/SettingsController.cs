@@ -161,4 +161,119 @@ public sealed class SettingsController(ISettingsService settingsService) : Contr
             return BadRequest(new { message = exception.Message });
         }
     }
+
+    [HttpGet("attendance-rules")]
+    [Authorize(Policy = PermissionCodes.AttendanceManage)]
+    [ProducesResponseType(typeof(IReadOnlyCollection<AttendanceRuleProfileResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAttendanceRules(CancellationToken cancellationToken = default)
+    {
+        var response = await settingsService.GetAttendanceRuleProfilesAsync(cancellationToken);
+        return Ok(response);
+    }
+
+    [HttpPost("attendance-rules")]
+    [Authorize(Policy = PermissionCodes.AttendanceManage)]
+    [ProducesResponseType(typeof(AttendanceRuleProfileResponse), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> CreateAttendanceRule([FromBody] UpsertAttendanceRuleProfileRequest request, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await settingsService.CreateAttendanceRuleProfileAsync(request, cancellationToken);
+            return CreatedAtAction(nameof(GetAttendanceRules), new { }, response);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+    }
+
+    [HttpPut("attendance-rules/{ruleId:guid}")]
+    [Authorize(Policy = PermissionCodes.AttendanceManage)]
+    [ProducesResponseType(typeof(AttendanceRuleProfileResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> UpdateAttendanceRule(Guid ruleId, [FromBody] UpsertAttendanceRuleProfileRequest request, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await settingsService.UpdateAttendanceRuleProfileAsync(ruleId, request, cancellationToken);
+            return Ok(response);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+    }
+
+    [HttpPost("attendance-rules/preview")]
+    [Authorize(Policy = PermissionCodes.AttendanceManage)]
+    [ProducesResponseType(typeof(AttendanceRulePreviewResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> PreviewAttendanceRule([FromBody] AttendanceRulePreviewRequest request, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await settingsService.PreviewAttendanceRuleAsync(request, cancellationToken);
+            return Ok(response);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+    }
+
+    [HttpGet("work-calendar")]
+    [Authorize(Policy = PermissionCodes.SettingsManage)]
+    [ProducesResponseType(typeof(IReadOnlyCollection<WorkCalendarEntryResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> GetWorkCalendar(
+        [FromQuery] int year,
+        [FromQuery] int month,
+        [FromQuery] Guid? branchId,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await settingsService.GetWorkCalendarEntriesAsync(year, month, branchId, cancellationToken);
+            return Ok(response);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+    }
+
+    [HttpPost("work-calendar")]
+    [Authorize(Policy = PermissionCodes.SettingsManage)]
+    [ProducesResponseType(typeof(WorkCalendarEntryResponse), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> CreateWorkCalendar([FromBody] UpsertWorkCalendarEntryRequest request, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await settingsService.CreateWorkCalendarEntryAsync(request, cancellationToken);
+            return CreatedAtAction(nameof(GetWorkCalendar), new { year = request.CalendarDate.Year, month = request.CalendarDate.Month, branchId = request.BranchId }, response);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+    }
+
+    [HttpPut("work-calendar/{entryId:guid}")]
+    [Authorize(Policy = PermissionCodes.SettingsManage)]
+    [ProducesResponseType(typeof(WorkCalendarEntryResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> UpdateWorkCalendar(Guid entryId, [FromBody] UpsertWorkCalendarEntryRequest request, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await settingsService.UpdateWorkCalendarEntryAsync(entryId, request, cancellationToken);
+            return Ok(response);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+    }
 }

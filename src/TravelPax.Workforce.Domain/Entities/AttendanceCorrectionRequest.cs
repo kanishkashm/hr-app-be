@@ -9,6 +9,7 @@ public sealed class AttendanceCorrectionRequest : BaseAuditableEntity
     public AttendanceRecord AttendanceRecord { get; set; } = null!;
     public Guid RequestedByUserId { get; set; }
     public AppUser RequestedByUser { get; set; } = null!;
+    public string RequestType { get; set; } = "Correction";
     public DateTimeOffset RequestedClockInAt { get; set; }
     public DateTimeOffset? RequestedClockOutAt { get; set; }
     public string? RequestedNotes { get; set; }

@@ -19,6 +19,8 @@ public sealed class AppUser : IdentityUser<Guid>
     public OfficeBranch? Branch { get; set; }
     public string Status { get; set; } = "Active";
     public string? ProfilePhotoUrl { get; set; }
+    public string? EmergencyContactName { get; set; }
+    public string? EmergencyContactPhone { get; set; }
     public DateTimeOffset? LastLoginAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public Guid? CreatedBy { get; set; }

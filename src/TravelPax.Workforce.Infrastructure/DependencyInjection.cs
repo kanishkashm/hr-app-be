@@ -16,6 +16,8 @@ using TravelPax.Workforce.Application.Abstractions.Users;
 using TravelPax.Workforce.Application.Abstractions.Reports;
 using TravelPax.Workforce.Application.Abstractions.Leave;
 using TravelPax.Workforce.Application.Abstractions.Notifications;
+using TravelPax.Workforce.Application.Abstractions.Shifts;
+using TravelPax.Workforce.Application.Abstractions.Managers;
 using TravelPax.Workforce.Infrastructure.Attendance;
 using TravelPax.Workforce.Infrastructure.Audit;
 using TravelPax.Workforce.Domain.Entities;
@@ -30,6 +32,8 @@ using TravelPax.Workforce.Domain.Constants;
 using TravelPax.Workforce.Infrastructure.Reports;
 using TravelPax.Workforce.Infrastructure.Leave;
 using TravelPax.Workforce.Infrastructure.Notifications;
+using TravelPax.Workforce.Infrastructure.Shifts;
+using TravelPax.Workforce.Infrastructure.Managers;
 
 namespace TravelPax.Workforce.Infrastructure;
 
@@ -52,6 +56,8 @@ public static class DependencyInjection
         services.AddScoped<ILeaveService, LeaveService>();
         services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<IEmailOutboxService, EmailOutboxService>();
+        services.AddScoped<IShiftService, ShiftService>();
+        services.AddScoped<IManagerService, ManagerService>();
         services.AddHostedService<EmailOutboxWorker>();
         services.AddSingleton<IJwtTokenGenerator, JwtTokenGenerator>();
         services.AddScoped<IdentitySeeder>();

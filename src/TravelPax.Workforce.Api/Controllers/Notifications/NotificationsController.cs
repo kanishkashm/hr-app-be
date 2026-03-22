@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelPax.Workforce.Application.Abstractions.Notifications;
 using TravelPax.Workforce.Contracts.Notifications;
+using TravelPax.Workforce.Domain.Constants;
 
 namespace TravelPax.Workforce.Api.Controllers.Notifications;
 
@@ -40,5 +41,14 @@ public sealed class NotificationsController(INotificationService notificationSer
     {
         await notificationService.MarkAllAsReadAsync(cancellationToken);
         return NoContent();
+    }
+
+    [HttpGet("outbox/health")]
+    [Authorize(Policy = PermissionCodes.AuditView)]
+    [ProducesResponseType(typeof(EmailOutboxHealthResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetOutboxHealth(CancellationToken cancellationToken = default)
+    {
+        var response = await notificationService.GetEmailOutboxHealthAsync(cancellationToken);
+        return Ok(response);
     }
 }

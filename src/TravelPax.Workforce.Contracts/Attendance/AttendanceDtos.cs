@@ -84,7 +84,8 @@ public sealed record AttendanceCorrectionSubmissionRequest(
     DateTimeOffset ClockInAt,
     DateTimeOffset? ClockOutAt,
     string? Notes,
-    string Reason);
+    string Reason,
+    string? RequestType = null);
 
 public sealed record AttendanceCorrectionReviewRequest(
     bool Approve,
@@ -96,6 +97,7 @@ public sealed record AttendanceCorrectionRequestResponse(
     Guid RequestedByUserId,
     string RequestedByEmployee,
     DateOnly AttendanceDate,
+    string RequestType,
     DateTimeOffset RequestedClockInAt,
     DateTimeOffset? RequestedClockOutAt,
     string? RequestedNotes,
@@ -110,3 +112,13 @@ public sealed record AttendanceCorrectionRequestResponse(
 public sealed record AttendanceCorrectionRequestListResponse(
     IReadOnlyCollection<AttendanceCorrectionRequestResponse> Items,
     int TotalCount);
+
+public sealed record AttendanceExceptionTimelineEventResponse(
+    DateTimeOffset At,
+    string EventType,
+    string Actor,
+    string? Note);
+
+public sealed record AttendanceExceptionDetailResponse(
+    AttendanceCorrectionRequestResponse Request,
+    IReadOnlyCollection<AttendanceExceptionTimelineEventResponse> Timeline);

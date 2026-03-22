@@ -16,4 +16,11 @@ public interface ISettingsService
     Task<IReadOnlyCollection<PayrollPeriodFinalizationResponse>> GetPayrollFinalizationsAsync(int? year, int? month, Guid? branchId, CancellationToken cancellationToken = default);
     Task<PayrollPeriodFinalizationResponse> FinalizePayrollPeriodAsync(FinalizePayrollPeriodRequest request, CancellationToken cancellationToken = default);
     Task<PayrollPeriodFinalizationResponse> ReopenPayrollPeriodAsync(Guid finalizationId, ReopenPayrollPeriodRequest request, CancellationToken cancellationToken = default);
+    Task<IReadOnlyCollection<AttendanceRuleProfileResponse>> GetAttendanceRuleProfilesAsync(CancellationToken cancellationToken = default);
+    Task<AttendanceRuleProfileResponse> CreateAttendanceRuleProfileAsync(UpsertAttendanceRuleProfileRequest request, CancellationToken cancellationToken = default);
+    Task<AttendanceRuleProfileResponse> UpdateAttendanceRuleProfileAsync(Guid ruleId, UpsertAttendanceRuleProfileRequest request, CancellationToken cancellationToken = default);
+    Task<AttendanceRulePreviewResponse> PreviewAttendanceRuleAsync(AttendanceRulePreviewRequest request, CancellationToken cancellationToken = default);
+    Task<IReadOnlyCollection<WorkCalendarEntryResponse>> GetWorkCalendarEntriesAsync(int year, int month, Guid? branchId, CancellationToken cancellationToken = default);
+    Task<WorkCalendarEntryResponse> CreateWorkCalendarEntryAsync(UpsertWorkCalendarEntryRequest request, CancellationToken cancellationToken = default);
+    Task<WorkCalendarEntryResponse> UpdateWorkCalendarEntryAsync(Guid entryId, UpsertWorkCalendarEntryRequest request, CancellationToken cancellationToken = default);
 }

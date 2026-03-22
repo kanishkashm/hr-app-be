@@ -12,6 +12,10 @@ public interface IUserService
     Task ResetPasswordAsync(Guid userId, ResetPasswordRequest request, CancellationToken cancellationToken = default);
     Task<UserDetailResponse> GetMyProfileAsync(CancellationToken cancellationToken = default);
     Task<UserDetailResponse> UpdateMyProfileAsync(UpdateMyProfileRequest request, CancellationToken cancellationToken = default);
+    Task<ProfileUpdateRequestResponse> SubmitMyProfileUpdateRequestAsync(CreateMyProfileUpdateRequest request, CancellationToken cancellationToken = default);
+    Task<IReadOnlyCollection<ProfileUpdateRequestResponse>> GetMyProfileUpdateRequestsAsync(int take, CancellationToken cancellationToken = default);
+    Task<ProfileUpdateRequestListResponse> GetProfileUpdateRequestsAsync(string? status, int page, int pageSize, CancellationToken cancellationToken = default);
+    Task<ProfileUpdateRequestResponse> ReviewProfileUpdateRequestAsync(Guid requestId, ReviewProfileUpdateRequest request, CancellationToken cancellationToken = default);
     Task<IReadOnlyCollection<RoleOptionResponse>> GetRoleOptionsAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyCollection<BranchOptionResponse>> GetBranchOptionsAsync(CancellationToken cancellationToken = default);
 }

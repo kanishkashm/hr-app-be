@@ -86,6 +86,60 @@ public sealed class UsersController(IUserService userService) : ControllerBase
         return Ok(response);
     }
 
+    [HttpPost("me/profile-update-requests")]
+    [ProducesResponseType(typeof(ProfileUpdateRequestResponse), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> SubmitMyProfileUpdateRequest([FromBody] CreateMyProfileUpdateRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await userService.SubmitMyProfileUpdateRequestAsync(request, cancellationToken);
+            return CreatedAtAction(nameof(GetMyProfileUpdateRequests), new { }, response);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+    }
+
+    [HttpGet("me/profile-update-requests")]
+    [ProducesResponseType(typeof(IReadOnlyCollection<ProfileUpdateRequestResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetMyProfileUpdateRequests([FromQuery] int take = 20, CancellationToken cancellationToken = default)
+    {
+        var response = await userService.GetMyProfileUpdateRequestsAsync(take, cancellationToken);
+        return Ok(response);
+    }
+
+    [HttpGet("profile-update-requests")]
+    [Authorize(Policy = PermissionCodes.UsersEdit)]
+    [ProducesResponseType(typeof(ProfileUpdateRequestListResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetProfileUpdateRequests(
+        [FromQuery] string? status,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await userService.GetProfileUpdateRequestsAsync(status, page, pageSize, cancellationToken);
+        return Ok(response);
+    }
+
+    [HttpPatch("profile-update-requests/{requestId:guid}/review")]
+    [Authorize(Policy = PermissionCodes.UsersEdit)]
+    [ProducesResponseType(typeof(ProfileUpdateRequestResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ReviewProfileUpdateRequest(Guid requestId, [FromBody] ReviewProfileUpdateRequest request, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await userService.ReviewProfileUpdateRequestAsync(requestId, request, cancellationToken);
+            return Ok(response);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+    }
+
     [HttpGet("meta/roles")]
     [Authorize(Policy = PermissionCodes.UsersView)]
     [ProducesResponseType(typeof(IReadOnlyCollection<RoleOptionResponse>), StatusCodes.Status200OK)]

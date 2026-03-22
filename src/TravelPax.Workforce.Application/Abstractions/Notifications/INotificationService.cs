@@ -5,6 +5,7 @@ namespace TravelPax.Workforce.Application.Abstractions.Notifications;
 public interface INotificationService
 {
     Task<NotificationSummaryResponse> GetMyNotificationsAsync(int take, CancellationToken cancellationToken = default);
+    Task<EmailOutboxHealthResponse> GetEmailOutboxHealthAsync(CancellationToken cancellationToken = default);
     Task MarkAsReadAsync(Guid notificationId, CancellationToken cancellationToken = default);
     Task MarkAllAsReadAsync(CancellationToken cancellationToken = default);
     Task PublishToUsersAsync(
