@@ -109,3 +109,7 @@ public sealed record PayrollPeriodFinalizationResponse(
     Guid? ReopenedByUserId,
     string SnapshotJson,
     string? Notes);
+
+public sealed record ReopenPayrollPeriodRequest(
+    string Reason,
+    bool UnlockAttendanceLock = true);

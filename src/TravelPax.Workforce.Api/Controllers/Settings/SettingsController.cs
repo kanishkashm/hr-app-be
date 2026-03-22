@@ -141,4 +141,24 @@ public sealed class SettingsController(ISettingsService settingsService) : Contr
             return BadRequest(new { message = exception.Message });
         }
     }
+
+    [HttpPost("payroll-finalizations/{finalizationId:guid}/reopen")]
+    [Authorize(Policy = PermissionCodes.AttendanceManage)]
+    [ProducesResponseType(typeof(PayrollPeriodFinalizationResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ReopenPayrollPeriod(
+        Guid finalizationId,
+        [FromBody] ReopenPayrollPeriodRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await settingsService.ReopenPayrollPeriodAsync(finalizationId, request, cancellationToken);
+            return Ok(response);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+    }
 }

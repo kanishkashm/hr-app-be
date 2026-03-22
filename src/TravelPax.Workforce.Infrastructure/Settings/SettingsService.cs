@@ -4,6 +4,7 @@ using TravelPax.Workforce.Application.Abstractions.CurrentUser;
 using TravelPax.Workforce.Application.Abstractions.Networking;
 using TravelPax.Workforce.Application.Abstractions.Settings;
 using TravelPax.Workforce.Contracts.Settings;
+using TravelPax.Workforce.Domain.Constants;
 using TravelPax.Workforce.Domain.Entities;
 using TravelPax.Workforce.Infrastructure.Persistence;
 
@@ -515,6 +516,85 @@ public sealed class SettingsService(
             await dbContext.Entry(entity).Reference(x => x.Branch).LoadAsync(cancellationToken);
         }
 
+        return MapPayrollFinalization(entity);
+    }
+
+    public async Task<PayrollPeriodFinalizationResponse> ReopenPayrollPeriodAsync(
+        Guid finalizationId,
+        ReopenPayrollPeriodRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Reason))
+        {
+            throw new InvalidOperationException("Re-open reason is required.");
+        }
+
+        var actorId = currentUserService.UserId;
+        var actor = actorId is null
+            ? throw new UnauthorizedAccessException("User is not authenticated.")
+            : actorId.Value;
+
+        var canReopen = await dbContext.UserRoles
+            .Where(x => x.UserId == actor)
+            .Join(dbContext.Roles, ur => ur.RoleId, r => r.Id, (_, role) => role.Name)
+            .AnyAsync(role => role == RoleCodes.SuperAdmin || role == RoleCodes.HrAdmin, cancellationToken);
+        if (!canReopen)
+        {
+            throw new InvalidOperationException("Only Super Admin or HR Admin can reopen finalized payroll periods.");
+        }
+
+        var entity = await dbContext.PayrollPeriodFinalizations
+            .Include(x => x.Branch)
+            .FirstOrDefaultAsync(x => x.Id == finalizationId, cancellationToken)
+            ?? throw new InvalidOperationException("Payroll finalization not found.");
+
+        if (!entity.IsFinalized)
+        {
+            throw new InvalidOperationException("Payroll period is already reopened.");
+        }
+
+        entity.IsFinalized = false;
+        entity.ReopenedAt = DateTimeOffset.UtcNow;
+        entity.ReopenedByUserId = actor;
+        entity.UpdatedAt = DateTimeOffset.UtcNow;
+        entity.UpdatedBy = actor;
+        var reason = request.Reason.Trim();
+        entity.Notes = string.IsNullOrWhiteSpace(entity.Notes)
+            ? $"Reopened: {reason}"
+            : $"{entity.Notes}\nReopened: {reason}";
+
+        if (request.UnlockAttendanceLock)
+        {
+            var lockEntity = await dbContext.AttendancePeriodLocks
+                .FirstOrDefaultAsync(
+                    x => x.Year == entity.Year
+                         && x.Month == entity.Month
+                         && x.BranchId == entity.BranchId,
+                    cancellationToken);
+            if (lockEntity is not null && lockEntity.IsLocked)
+            {
+                lockEntity.IsLocked = false;
+                lockEntity.UnlockedAt = DateTimeOffset.UtcNow;
+                lockEntity.UnlockedByUserId = actor;
+                lockEntity.UpdatedAt = DateTimeOffset.UtcNow;
+                lockEntity.UpdatedBy = actor;
+                lockEntity.Notes = string.IsNullOrWhiteSpace(lockEntity.Notes)
+                    ? $"Unlocked via payroll reopen: {reason}"
+                    : $"{lockEntity.Notes}\nUnlocked via payroll reopen: {reason}";
+            }
+        }
+
+        dbContext.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = actor,
+            Action = "PayrollPeriodReopened",
+            Module = "Payroll",
+            EntityName = nameof(PayrollPeriodFinalization),
+            EntityId = entity.Id.ToString(),
+            NewValues = $"Year={entity.Year};Month={entity.Month};Scope={(entity.Branch?.Code ?? "ALL_BRANCHES")};Reason={reason};UnlockAttendanceLock={request.UnlockAttendanceLock}"
+        });
+
+        await dbContext.SaveChangesAsync(cancellationToken);
         return MapPayrollFinalization(entity);
     }
 
