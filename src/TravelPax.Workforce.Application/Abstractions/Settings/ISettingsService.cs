@@ -13,4 +13,6 @@ public interface ISettingsService
     Task<NetworkValidationCheckResponse> TestNetworkAsync(NetworkValidationCheckRequest request, CancellationToken cancellationToken = default);
     Task<IReadOnlyCollection<AttendancePeriodLockResponse>> GetAttendancePeriodLocksAsync(int? year, int? month, Guid? branchId, CancellationToken cancellationToken = default);
     Task<AttendancePeriodLockResponse> SetAttendancePeriodLockAsync(SetAttendancePeriodLockRequest request, CancellationToken cancellationToken = default);
+    Task<IReadOnlyCollection<PayrollPeriodFinalizationResponse>> GetPayrollFinalizationsAsync(int? year, int? month, Guid? branchId, CancellationToken cancellationToken = default);
+    Task<PayrollPeriodFinalizationResponse> FinalizePayrollPeriodAsync(FinalizePayrollPeriodRequest request, CancellationToken cancellationToken = default);
 }

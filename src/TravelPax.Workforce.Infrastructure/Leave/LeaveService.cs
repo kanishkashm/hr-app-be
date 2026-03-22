@@ -21,6 +21,7 @@ public sealed class LeaveService(
     public async Task<LeaveRequestResponse> CreateMyRequestAsync(LeaveRequestCreateRequest request, CancellationToken cancellationToken = default)
     {
         var actor = await GetCurrentUserEntityAsync(cancellationToken);
+        await EnsureRangeNotFinalizedAsync(request.StartDate, request.EndDate, actor.BranchId, cancellationToken);
         if (request.StartDate > request.EndDate)
         {
             throw new InvalidOperationException("Start date must be before or equal to end date.");
@@ -160,6 +161,7 @@ public sealed class LeaveService(
             .Include(x => x.ReviewedByUser)
             .FirstOrDefaultAsync(x => x.Id == requestId, cancellationToken)
             ?? throw new InvalidOperationException("Leave request not found.");
+        await EnsureRangeNotFinalizedAsync(entity.StartDate, entity.EndDate, entity.User.BranchId, cancellationToken);
 
         if (entity.Status != "Pending")
         {
@@ -577,6 +579,31 @@ public sealed class LeaveService(
             "SecondHalf" => "SecondHalf",
             _ => "FullDay"
         };
+    }
+
+    private async Task EnsureRangeNotFinalizedAsync(
+        DateOnly startDate,
+        DateOnly endDate,
+        Guid? branchId,
+        CancellationToken cancellationToken)
+    {
+        var rangeStart = new DateOnly(startDate.Year, startDate.Month, 1);
+        var rangeEnd = new DateOnly(endDate.Year, endDate.Month, 1);
+
+        for (var monthCursor = rangeStart; monthCursor <= rangeEnd; monthCursor = monthCursor.AddMonths(1))
+        {
+            var isFinalized = await dbContext.PayrollPeriodFinalizations.AnyAsync(
+                x => x.IsFinalized
+                     && x.Year == monthCursor.Year
+                     && x.Month == monthCursor.Month
+                     && (x.BranchId == null || (branchId != null && x.BranchId == branchId)),
+                cancellationToken);
+            if (isFinalized)
+            {
+                throw new InvalidOperationException(
+                    $"Leave changes are blocked because payroll is finalized for {monthCursor:yyyy-MM}.");
+            }
+        }
     }
 
     private async Task<AppUser> GetCurrentUserEntityAsync(CancellationToken cancellationToken)

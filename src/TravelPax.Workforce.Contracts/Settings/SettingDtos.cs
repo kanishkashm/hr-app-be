@@ -89,3 +89,23 @@ public sealed record SetAttendancePeriodLockRequest(
     Guid? BranchId,
     bool IsLocked,
     string? Notes);
+
+public sealed record FinalizePayrollPeriodRequest(
+    int Year,
+    int Month,
+    Guid? BranchId,
+    string? Notes);
+
+public sealed record PayrollPeriodFinalizationResponse(
+    Guid Id,
+    int Year,
+    int Month,
+    Guid? BranchId,
+    string BranchName,
+    bool IsFinalized,
+    DateTimeOffset FinalizedAt,
+    Guid? FinalizedByUserId,
+    DateTimeOffset? ReopenedAt,
+    Guid? ReopenedByUserId,
+    string SnapshotJson,
+    string? Notes);

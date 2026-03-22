@@ -566,6 +566,18 @@ public sealed class AttendanceService(
 
     private async Task EnsureAttendanceDateUnlockedAsync(DateOnly attendanceDate, Guid? branchId, CancellationToken cancellationToken)
     {
+        var isFinalized = await dbContext.PayrollPeriodFinalizations.AnyAsync(
+            x => x.IsFinalized
+                 && x.Year == attendanceDate.Year
+                 && x.Month == attendanceDate.Month
+                 && (x.BranchId == null || (branchId != null && x.BranchId == branchId)),
+            cancellationToken);
+        if (isFinalized)
+        {
+            throw new InvalidOperationException(
+                $"Attendance for period {attendanceDate:yyyy-MM} is finalized for payroll and cannot be changed.");
+        }
+
         var isLocked = await dbContext.AttendancePeriodLocks.AnyAsync(
             x => x.IsLocked
                  && x.Year == attendanceDate.Year

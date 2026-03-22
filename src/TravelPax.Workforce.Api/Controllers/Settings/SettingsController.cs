@@ -111,4 +111,34 @@ public sealed class SettingsController(ISettingsService settingsService) : Contr
             return BadRequest(new { message = exception.Message });
         }
     }
+
+    [HttpGet("payroll-finalizations")]
+    [Authorize(Policy = PermissionCodes.AttendanceManage)]
+    [ProducesResponseType(typeof(IReadOnlyCollection<PayrollPeriodFinalizationResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetPayrollFinalizations(
+        [FromQuery] int? year,
+        [FromQuery] int? month,
+        [FromQuery] Guid? branchId,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await settingsService.GetPayrollFinalizationsAsync(year, month, branchId, cancellationToken);
+        return Ok(response);
+    }
+
+    [HttpPost("payroll-finalizations/finalize")]
+    [Authorize(Policy = PermissionCodes.AttendanceManage)]
+    [ProducesResponseType(typeof(PayrollPeriodFinalizationResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> FinalizePayrollPeriod([FromBody] FinalizePayrollPeriodRequest request, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await settingsService.FinalizePayrollPeriodAsync(request, cancellationToken);
+            return Ok(response);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+    }
 }

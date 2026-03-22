@@ -16,6 +16,7 @@ public sealed class TravelPaxDbContext(DbContextOptions<TravelPaxDbContext> opti
     public DbSet<CompanySetting> CompanySettings => Set<CompanySetting>();
     public DbSet<AttendanceRecord> AttendanceRecords => Set<AttendanceRecord>();
     public DbSet<AttendancePeriodLock> AttendancePeriodLocks => Set<AttendancePeriodLock>();
+    public DbSet<PayrollPeriodFinalization> PayrollPeriodFinalizations => Set<PayrollPeriodFinalization>();
     public DbSet<AttendanceCorrectionRequest> AttendanceCorrectionRequests => Set<AttendanceCorrectionRequest>();
     public DbSet<LeaveRequest> LeaveRequests => Set<LeaveRequest>();
     public DbSet<LeavePolicy> LeavePolicies => Set<LeavePolicy>();
@@ -110,6 +111,16 @@ public sealed class TravelPaxDbContext(DbContextOptions<TravelPaxDbContext> opti
             entity.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.SetNull);
             entity.HasOne(x => x.LockedByUser).WithMany().HasForeignKey(x => x.LockedByUserId).OnDelete(DeleteBehavior.SetNull);
             entity.HasOne(x => x.UnlockedByUser).WithMany().HasForeignKey(x => x.UnlockedByUserId).OnDelete(DeleteBehavior.SetNull);
+        });
+        builder.Entity<PayrollPeriodFinalization>(entity =>
+        {
+            entity.ToTable("payroll_period_finalizations");
+            entity.Property(x => x.SnapshotJson).HasColumnType("jsonb");
+            entity.Property(x => x.Notes).HasMaxLength(1000);
+            entity.HasIndex(x => new { x.Year, x.Month, x.BranchId, x.IsFinalized });
+            entity.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(x => x.FinalizedByUser).WithMany().HasForeignKey(x => x.FinalizedByUserId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(x => x.ReopenedByUser).WithMany().HasForeignKey(x => x.ReopenedByUserId).OnDelete(DeleteBehavior.SetNull);
         });
         builder.Entity<AttendanceCorrectionRequest>(entity =>
         {

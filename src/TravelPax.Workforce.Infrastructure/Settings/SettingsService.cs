@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TravelPax.Workforce.Application.Abstractions.CurrentUser;
 using TravelPax.Workforce.Application.Abstractions.Networking;
@@ -296,6 +297,20 @@ public sealed class SettingsService(
         var scope = branch?.Code ?? "ALL_BRANCHES";
         var normalizedNotes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim();
 
+        if (!request.IsLocked)
+        {
+            var isFinalized = await dbContext.PayrollPeriodFinalizations.AnyAsync(
+                x => x.IsFinalized
+                     && x.Year == request.Year
+                     && x.Month == request.Month
+                     && (x.BranchId == request.BranchId || x.BranchId == null || request.BranchId == null),
+                cancellationToken);
+            if (isFinalized)
+            {
+                throw new InvalidOperationException("This period is already finalized for payroll. Re-open workflow is required before unlocking.");
+            }
+        }
+
         if (entity is null)
         {
             entity = new AttendancePeriodLock
@@ -357,6 +372,152 @@ public sealed class SettingsService(
         return MapAttendancePeriodLock(entity);
     }
 
+    public async Task<IReadOnlyCollection<PayrollPeriodFinalizationResponse>> GetPayrollFinalizationsAsync(
+        int? year,
+        int? month,
+        Guid? branchId,
+        CancellationToken cancellationToken = default)
+    {
+        var now = DateTime.UtcNow;
+        var resolvedYear = year ?? now.Year;
+
+        var query = dbContext.PayrollPeriodFinalizations
+            .Include(x => x.Branch)
+            .OrderByDescending(x => x.Year)
+            .ThenByDescending(x => x.Month)
+            .ThenBy(x => x.BranchId == null ? 0 : 1)
+            .AsQueryable();
+
+        query = query.Where(x => x.Year == resolvedYear);
+        if (month is not null)
+        {
+            query = query.Where(x => x.Month == month.Value);
+        }
+
+        if (branchId is not null)
+        {
+            query = query.Where(x => x.BranchId == branchId);
+        }
+
+        var items = await query.ToListAsync(cancellationToken);
+        return items.Select(MapPayrollFinalization).ToArray();
+    }
+
+    public async Task<PayrollPeriodFinalizationResponse> FinalizePayrollPeriodAsync(
+        FinalizePayrollPeriodRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request.Year < 2000 || request.Year > 2100)
+        {
+            throw new InvalidOperationException("Year must be between 2000 and 2100.");
+        }
+
+        if (request.Month is < 1 or > 12)
+        {
+            throw new InvalidOperationException("Month must be between 1 and 12.");
+        }
+
+        var actorId = currentUserService.UserId;
+        var actor = actorId is null
+            ? throw new UnauthorizedAccessException("User is not authenticated.")
+            : actorId.Value;
+
+        OfficeBranch? branch = null;
+        if (request.BranchId is not null)
+        {
+            branch = await dbContext.OfficeBranches.FirstOrDefaultAsync(x => x.Id == request.BranchId.Value, cancellationToken)
+                ?? throw new InvalidOperationException("Branch not found.");
+        }
+
+        var alreadyFinalized = await dbContext.PayrollPeriodFinalizations.AnyAsync(
+            x => x.IsFinalized
+                 && x.Year == request.Year
+                 && x.Month == request.Month
+                 && x.BranchId == request.BranchId,
+            cancellationToken);
+        if (alreadyFinalized)
+        {
+            throw new InvalidOperationException("This payroll period is already finalized for the selected scope.");
+        }
+
+        var isLocked = await dbContext.AttendancePeriodLocks.AnyAsync(
+            x => x.IsLocked
+                 && x.Year == request.Year
+                 && x.Month == request.Month
+                 && (x.BranchId == request.BranchId || x.BranchId == null),
+            cancellationToken);
+        if (!isLocked)
+        {
+            throw new InvalidOperationException("Lock the attendance period before finalizing payroll.");
+        }
+
+        var periodStart = new DateOnly(request.Year, request.Month, 1);
+        var periodEnd = periodStart.AddMonths(1).AddDays(-1);
+        var attendanceQuery = dbContext.AttendanceRecords
+            .Include(x => x.User)
+            .Where(x => x.AttendanceDate >= periodStart && x.AttendanceDate <= periodEnd);
+        if (request.BranchId is not null)
+        {
+            attendanceQuery = attendanceQuery.Where(x => x.BranchId == request.BranchId.Value);
+        }
+
+        var attendance = await attendanceQuery.ToListAsync(cancellationToken);
+        var activeUsersQuery = dbContext.Users.AsQueryable();
+        if (request.BranchId is not null)
+        {
+            activeUsersQuery = activeUsersQuery.Where(x => x.BranchId == request.BranchId.Value);
+        }
+        var activeUsers = await activeUsersQuery.CountAsync(x => x.Status == "Active", cancellationToken);
+
+        var summary = new
+        {
+            periodStart = periodStart.ToString("yyyy-MM-dd"),
+            periodEnd = periodEnd.ToString("yyyy-MM-dd"),
+            activeUsers,
+            attendanceRecords = attendance.Count,
+            uniqueEmployees = attendance.Select(x => x.UserId).Distinct().Count(),
+            presentDays = attendance.Count(x => x.Status == "Present"),
+            lateDays = attendance.Count(x => x.Status == "Late"),
+            pendingClockOutDays = attendance.Count(x => x.Status == "PendingClockOut" || x.ClockInAt == null || x.ClockOutAt == null),
+            totalWorkHours = Math.Round(attendance.Where(x => x.TotalWorkMinutes.HasValue).Sum(x => x.TotalWorkMinutes!.Value) / 60d, 2)
+        };
+
+        var entity = new PayrollPeriodFinalization
+        {
+            Id = Guid.NewGuid(),
+            Year = request.Year,
+            Month = request.Month,
+            BranchId = request.BranchId,
+            Branch = branch,
+            IsFinalized = true,
+            FinalizedAt = DateTimeOffset.UtcNow,
+            FinalizedByUserId = actor,
+            SnapshotJson = JsonSerializer.Serialize(summary),
+            Notes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim(),
+            CreatedBy = actor,
+            UpdatedBy = actor
+        };
+
+        dbContext.PayrollPeriodFinalizations.Add(entity);
+        dbContext.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = actor,
+            Action = "PayrollPeriodFinalized",
+            Module = "Payroll",
+            EntityName = nameof(PayrollPeriodFinalization),
+            EntityId = entity.Id.ToString(),
+            NewValues = $"Year={request.Year};Month={request.Month};Scope={(branch?.Code ?? "ALL_BRANCHES")};IsFinalized=true"
+        });
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        if (entity.Branch is null && entity.BranchId is not null)
+        {
+            await dbContext.Entry(entity).Reference(x => x.Branch).LoadAsync(cancellationToken);
+        }
+
+        return MapPayrollFinalization(entity);
+    }
+
     private async Task<CompanySetting> GetCompanyEntityAsync(CancellationToken cancellationToken)
     {
         return await dbContext.CompanySettings.OrderBy(x => x.CreatedAt).FirstAsync(cancellationToken);
@@ -406,6 +567,23 @@ public sealed class SettingsService(
             item.LockedByUserId,
             item.UnlockedAt,
             item.UnlockedByUserId,
+            item.Notes);
+    }
+
+    private static PayrollPeriodFinalizationResponse MapPayrollFinalization(PayrollPeriodFinalization item)
+    {
+        return new PayrollPeriodFinalizationResponse(
+            item.Id,
+            item.Year,
+            item.Month,
+            item.BranchId,
+            item.Branch?.Name ?? "All Branches",
+            item.IsFinalized,
+            item.FinalizedAt,
+            item.FinalizedByUserId,
+            item.ReopenedAt,
+            item.ReopenedByUserId,
+            item.SnapshotJson,
             item.Notes);
     }
 
