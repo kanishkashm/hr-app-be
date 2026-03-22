@@ -16,6 +16,11 @@ public sealed class TravelPaxDbContext(DbContextOptions<TravelPaxDbContext> opti
     public DbSet<CompanySetting> CompanySettings => Set<CompanySetting>();
     public DbSet<AttendanceRecord> AttendanceRecords => Set<AttendanceRecord>();
     public DbSet<AttendanceCorrectionRequest> AttendanceCorrectionRequests => Set<AttendanceCorrectionRequest>();
+    public DbSet<LeaveRequest> LeaveRequests => Set<LeaveRequest>();
+    public DbSet<LeavePolicy> LeavePolicies => Set<LeavePolicy>();
+    public DbSet<LeaveBalance> LeaveBalances => Set<LeaveBalance>();
+    public DbSet<UserNotification> UserNotifications => Set<UserNotification>();
+    public DbSet<EmailOutboxMessage> EmailOutboxMessages => Set<EmailOutboxMessage>();
     public DbSet<LoginAuditLog> LoginAuditLogs => Set<LoginAuditLog>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
@@ -114,6 +119,73 @@ public sealed class TravelPaxDbContext(DbContextOptions<TravelPaxDbContext> opti
                 .WithMany()
                 .HasForeignKey(x => x.ReviewedByUserId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+        builder.Entity<LeaveRequest>(entity =>
+        {
+            entity.ToTable("leave_requests");
+            entity.Property(x => x.LeaveType).HasMaxLength(50);
+            entity.Property(x => x.DayPortion).HasMaxLength(30);
+            entity.Property(x => x.Status).HasMaxLength(30);
+            entity.Property(x => x.Reason).HasMaxLength(1000);
+            entity.Property(x => x.ReviewerNote).HasMaxLength(1000);
+            entity.Property(x => x.TotalDays).HasPrecision(5, 1);
+            entity.HasOne(x => x.User)
+                .WithMany()
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.ReviewedByUser)
+                .WithMany()
+                .HasForeignKey(x => x.ReviewedByUserId)
+                .OnDelete(DeleteBehavior.SetNull);
+            entity.HasIndex(x => new { x.UserId, x.StartDate, x.EndDate });
+        });
+        builder.Entity<LeavePolicy>(entity =>
+        {
+            entity.ToTable("leave_policies");
+            entity.Property(x => x.LeaveType).HasMaxLength(50);
+            entity.Property(x => x.EmploymentType).HasMaxLength(50);
+            entity.HasOne(x => x.Branch)
+                .WithMany()
+                .HasForeignKey(x => x.BranchId)
+                .OnDelete(DeleteBehavior.SetNull);
+            entity.HasIndex(x => new { x.LeaveType, x.EmploymentType, x.BranchId }).IsUnique();
+        });
+        builder.Entity<LeaveBalance>(entity =>
+        {
+            entity.ToTable("leave_balances");
+            entity.Property(x => x.LeaveType).HasMaxLength(50);
+            entity.Property(x => x.AllocatedDays).HasPrecision(6, 1);
+            entity.Property(x => x.CarryForwardDays).HasPrecision(6, 1);
+            entity.Property(x => x.ManualAdjustmentDays).HasPrecision(6, 1);
+            entity.Property(x => x.UsedDays).HasPrecision(6, 1);
+            entity.HasOne(x => x.User)
+                .WithMany()
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(x => new { x.UserId, x.Year, x.LeaveType }).IsUnique();
+        });
+        builder.Entity<UserNotification>(entity =>
+        {
+            entity.ToTable("user_notifications");
+            entity.Property(x => x.Type).HasMaxLength(50);
+            entity.Property(x => x.Title).HasMaxLength(200);
+            entity.Property(x => x.Message).HasMaxLength(1000);
+            entity.Property(x => x.EntityName).HasMaxLength(100);
+            entity.Property(x => x.EntityId).HasMaxLength(100);
+            entity.HasOne(x => x.User)
+                .WithMany()
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(x => new { x.UserId, x.IsRead, x.CreatedAt });
+        });
+        builder.Entity<EmailOutboxMessage>(entity =>
+        {
+            entity.ToTable("email_outbox_messages");
+            entity.Property(x => x.ToEmail).HasMaxLength(320);
+            entity.Property(x => x.Subject).HasMaxLength(400);
+            entity.Property(x => x.Status).HasMaxLength(30);
+            entity.Property(x => x.LastError).HasMaxLength(2000);
+            entity.HasIndex(x => new { x.Status, x.NextAttemptAt, x.CreatedAt });
         });
         builder.Entity<LoginAuditLog>().ToTable("login_audit_logs");
         builder.Entity<AuditLog>().ToTable("audit_logs");

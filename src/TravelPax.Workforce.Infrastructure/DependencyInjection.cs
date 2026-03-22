@@ -14,6 +14,8 @@ using TravelPax.Workforce.Application.Abstractions.Roles;
 using TravelPax.Workforce.Application.Abstractions.Settings;
 using TravelPax.Workforce.Application.Abstractions.Users;
 using TravelPax.Workforce.Application.Abstractions.Reports;
+using TravelPax.Workforce.Application.Abstractions.Leave;
+using TravelPax.Workforce.Application.Abstractions.Notifications;
 using TravelPax.Workforce.Infrastructure.Attendance;
 using TravelPax.Workforce.Infrastructure.Audit;
 using TravelPax.Workforce.Domain.Entities;
@@ -26,6 +28,8 @@ using TravelPax.Workforce.Infrastructure.Settings;
 using TravelPax.Workforce.Infrastructure.Users;
 using TravelPax.Workforce.Domain.Constants;
 using TravelPax.Workforce.Infrastructure.Reports;
+using TravelPax.Workforce.Infrastructure.Leave;
+using TravelPax.Workforce.Infrastructure.Notifications;
 
 namespace TravelPax.Workforce.Infrastructure;
 
@@ -34,6 +38,7 @@ public static class DependencyInjection
     public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
         services.Configure<JwtOptions>(configuration.GetSection(JwtOptions.SectionName));
+        services.Configure<EmailOptions>(configuration.GetSection(EmailOptions.SectionName));
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
         services.AddScoped<IAuthService, AuthService>();
@@ -44,6 +49,10 @@ public static class DependencyInjection
         services.AddScoped<ISettingsService, SettingsService>();
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<IReportService, ReportService>();
+        services.AddScoped<ILeaveService, LeaveService>();
+        services.AddScoped<INotificationService, NotificationService>();
+        services.AddScoped<IEmailOutboxService, EmailOutboxService>();
+        services.AddHostedService<EmailOutboxWorker>();
         services.AddSingleton<IJwtTokenGenerator, JwtTokenGenerator>();
         services.AddScoped<IdentitySeeder>();
 

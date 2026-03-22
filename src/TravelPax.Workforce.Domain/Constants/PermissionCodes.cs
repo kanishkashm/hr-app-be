@@ -12,6 +12,9 @@ public static class PermissionCodes
     public const string RolesView = "roles.view";
     public const string RolesManage = "roles.manage";
     public const string ReportsView = "reports.view";
+    public const string LeaveRequest = "leave.request";
+    public const string LeaveView = "leave.view";
+    public const string LeaveManage = "leave.manage";
     public const string SettingsManage = "settings.manage";
     public const string AuditView = "audit.view";
 
@@ -27,6 +30,9 @@ public static class PermissionCodes
         RolesView,
         RolesManage,
         ReportsView,
+        LeaveRequest,
+        LeaveView,
+        LeaveManage,
         SettingsManage,
         AuditView
     ];

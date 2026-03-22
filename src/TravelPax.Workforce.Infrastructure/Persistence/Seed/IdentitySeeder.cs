@@ -42,6 +42,38 @@ public sealed class IdentitySeeder(
             });
         }
 
+        if (!await dbContext.LeavePolicies.AnyAsync(cancellationToken))
+        {
+            dbContext.LeavePolicies.AddRange(
+                new LeavePolicy
+                {
+                    Id = Guid.NewGuid(),
+                    LeaveType = "Annual",
+                    EmploymentType = "FullTime",
+                    Branch = branch,
+                    AnnualAllocationDays = 14,
+                    MaxCarryForwardDays = 5
+                },
+                new LeavePolicy
+                {
+                    Id = Guid.NewGuid(),
+                    LeaveType = "Casual",
+                    EmploymentType = "FullTime",
+                    Branch = branch,
+                    AnnualAllocationDays = 7,
+                    MaxCarryForwardDays = 0
+                },
+                new LeavePolicy
+                {
+                    Id = Guid.NewGuid(),
+                    LeaveType = "Medical",
+                    EmploymentType = "FullTime",
+                    Branch = branch,
+                    AnnualAllocationDays = 10,
+                    MaxCarryForwardDays = 0
+                });
+        }
+
         foreach (var permissionCode in PermissionCodes.All)
         {
             if (await dbContext.Permissions.AnyAsync(x => x.Name == permissionCode, cancellationToken))
@@ -67,6 +99,9 @@ public sealed class IdentitySeeder(
                 PermissionCodes.AttendanceView,
                 PermissionCodes.AttendanceClock,
                 PermissionCodes.AttendanceManage,
+                PermissionCodes.LeaveRequest,
+                PermissionCodes.LeaveView,
+                PermissionCodes.LeaveManage,
                 PermissionCodes.UsersView,
                 PermissionCodes.UsersCreate,
                 PermissionCodes.UsersEdit,
@@ -74,9 +109,9 @@ public sealed class IdentitySeeder(
                 PermissionCodes.AuditView,
                 PermissionCodes.SettingsManage
             ],
-            [RoleCodes.OperationsManager] = [PermissionCodes.AttendanceView, PermissionCodes.AttendanceManage, PermissionCodes.ReportsView],
-            [RoleCodes.TeamLead] = [PermissionCodes.AttendanceView, PermissionCodes.ReportsView],
-            [RoleCodes.Employee] = [PermissionCodes.AttendanceClock]
+            [RoleCodes.OperationsManager] = [PermissionCodes.AttendanceView, PermissionCodes.AttendanceManage, PermissionCodes.ReportsView, PermissionCodes.LeaveRequest, PermissionCodes.LeaveView],
+            [RoleCodes.TeamLead] = [PermissionCodes.AttendanceView, PermissionCodes.ReportsView, PermissionCodes.LeaveRequest, PermissionCodes.LeaveView],
+            [RoleCodes.Employee] = [PermissionCodes.AttendanceClock, PermissionCodes.LeaveRequest]
         };
 
         foreach (var (roleCode, permissions) in roleDefinitions)
@@ -145,6 +180,26 @@ public sealed class IdentitySeeder(
                 ClockOutIp = "203.94.76.25",
                 ClockInNetworkValidation = "InsideOfficeNetwork",
                 ClockOutNetworkValidation = "InsideOfficeNetwork"
+            });
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        if (!await dbContext.LeaveRequests.AnyAsync(x => x.UserId == employee.Id, cancellationToken))
+        {
+            var sampleStart = DateOnly.FromDateTime(DateTime.UtcNow.Date.AddDays(2));
+            dbContext.LeaveRequests.Add(new LeaveRequest
+            {
+                Id = Guid.NewGuid(),
+                UserId = employee.Id,
+                LeaveType = "Annual",
+                StartDate = sampleStart,
+                EndDate = sampleStart.AddDays(1),
+                TotalDays = 2,
+                Reason = "Sample personal leave request",
+                Status = "Pending",
+                CreatedBy = employee.Id,
+                UpdatedBy = employee.Id
             });
 
             await dbContext.SaveChangesAsync(cancellationToken);
