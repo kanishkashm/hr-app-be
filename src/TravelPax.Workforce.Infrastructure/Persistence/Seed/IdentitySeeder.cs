@@ -45,6 +45,7 @@ public sealed class IdentitySeeder(
         var attendanceRuleProfilesTableExists = await TableExistsAsync("attendance_rule_profiles", cancellationToken);
         if (attendanceRuleProfilesTableExists && !await dbContext.AttendanceRuleProfiles.AnyAsync(cancellationToken))
         {
+            var now = DateTimeOffset.UtcNow;
             dbContext.AttendanceRuleProfiles.Add(new AttendanceRuleProfile
             {
                 Id = Guid.NewGuid(),
@@ -58,7 +59,9 @@ public sealed class IdentitySeeder(
                 OvertimeThresholdMinutes = 540,
                 EarlyOutGraceMinutes = 0,
                 ShortLeaveDeductionMinutes = 60,
-                EnableMissedPunchDetection = true
+                EnableMissedPunchDetection = true,
+                CreatedAt = now,
+                UpdatedAt = now
             });
         }
 
