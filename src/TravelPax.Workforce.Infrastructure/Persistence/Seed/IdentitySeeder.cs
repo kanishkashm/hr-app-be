@@ -178,56 +178,35 @@ public sealed class IdentitySeeder(
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        await EnsureUserAsync("TP-0001", "superadmin@travelpax.lk", "Super", "Admin", "Super Admin", RoleCodes.SuperAdmin, branch.Id, cancellationToken);
-        await EnsureUserAsync("TP-0002", "hradmin@travelpax.lk", "HR", "Admin", "HR Admin", RoleCodes.HrAdmin, branch.Id, cancellationToken);
-        var employee = await EnsureUserAsync("TP-0003", "employee@travelpax.lk", "Team", "Member", "TravelPax Employee", RoleCodes.Employee, branch.Id, cancellationToken);
+        var seedBootstrapAdmin = !string.Equals(
+            Environment.GetEnvironmentVariable("SEED_BOOTSTRAP_ADMIN"),
+            "false",
+            StringComparison.OrdinalIgnoreCase);
 
-        if (!await dbContext.AttendanceRecords.AnyAsync(x => x.UserId == employee.Id, cancellationToken))
+        if (seedBootstrapAdmin)
         {
-            var sriLankaTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Colombo");
-            var todayColombo = TimeZoneInfo.ConvertTime(DateTime.UtcNow, sriLankaTimeZone);
-            var sampleLocalDate = todayColombo.Date.AddDays(-1);
-            var clockInUtc = TimeZoneInfo.ConvertTimeToUtc(sampleLocalDate.AddHours(9).AddMinutes(6), sriLankaTimeZone);
-            var clockOutUtc = TimeZoneInfo.ConvertTimeToUtc(sampleLocalDate.AddHours(18).AddMinutes(2), sriLankaTimeZone);
-            dbContext.AttendanceRecords.Add(new AttendanceRecord
+            var bootstrapEmail = Environment.GetEnvironmentVariable("SEED_BOOTSTRAP_ADMIN_EMAIL")?.Trim();
+            if (string.IsNullOrWhiteSpace(bootstrapEmail))
             {
-                Id = Guid.NewGuid(),
-                UserId = employee.Id,
-                BranchId = branch.Id,
-                AttendanceDate = DateOnly.FromDateTime(sampleLocalDate),
-                ClockInAt = new DateTimeOffset(clockInUtc, TimeSpan.Zero),
-                ClockOutAt = new DateTimeOffset(clockOutUtc, TimeSpan.Zero),
-                TotalWorkMinutes = 536,
-                Status = "Late",
-                IsLate = true,
-                LateMinutes = 6,
-                ClockInIp = "203.94.76.25",
-                ClockOutIp = "203.94.76.25",
-                ClockInNetworkValidation = "InsideOfficeNetwork",
-                ClockOutNetworkValidation = "InsideOfficeNetwork"
-            });
+                bootstrapEmail = "admin@travelpax.lk";
+            }
 
-            await dbContext.SaveChangesAsync(cancellationToken);
-        }
-
-        if (!await dbContext.LeaveRequests.AnyAsync(x => x.UserId == employee.Id, cancellationToken))
-        {
-            var sampleStart = DateOnly.FromDateTime(DateTime.UtcNow.Date.AddDays(2));
-            dbContext.LeaveRequests.Add(new LeaveRequest
+            var bootstrapPassword = Environment.GetEnvironmentVariable("SEED_BOOTSTRAP_ADMIN_PASSWORD");
+            if (string.IsNullOrWhiteSpace(bootstrapPassword))
             {
-                Id = Guid.NewGuid(),
-                UserId = employee.Id,
-                LeaveType = "Annual",
-                StartDate = sampleStart,
-                EndDate = sampleStart.AddDays(1),
-                TotalDays = 2,
-                Reason = "Sample personal leave request",
-                Status = "Pending",
-                CreatedBy = employee.Id,
-                UpdatedBy = employee.Id
-            });
+                bootstrapPassword = "ChangeMe@123!";
+            }
 
-            await dbContext.SaveChangesAsync(cancellationToken);
+            await EnsureUserAsync(
+                "TP-0001",
+                bootstrapEmail,
+                "System",
+                "Admin",
+                "System Admin",
+                RoleCodes.SuperAdmin,
+                branch.Id,
+                bootstrapPassword,
+                cancellationToken);
         }
     }
 
@@ -239,6 +218,7 @@ public sealed class IdentitySeeder(
         string displayName,
         string roleCode,
         Guid branchId,
+        string password,
         CancellationToken cancellationToken)
     {
         var user = await userManager.FindByEmailAsync(email);
@@ -265,7 +245,7 @@ public sealed class IdentitySeeder(
                 LockoutEnabled = true
             };
 
-            var result = await userManager.CreateAsync(user, "TravelPax@123");
+            var result = await userManager.CreateAsync(user, password);
             if (!result.Succeeded)
             {
                 throw new InvalidOperationException(string.Join(", ", result.Errors.Select(x => x.Description)));
