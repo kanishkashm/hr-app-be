@@ -1,5 +1,9 @@
+using System.Security.Cryptography;
+using System.Net;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using TravelPax.Workforce.Application.Abstractions.Notifications;
 using TravelPax.Workforce.Application.Abstractions.CurrentUser;
 using TravelPax.Workforce.Application.Abstractions.Users;
 using TravelPax.Workforce.Contracts.Users;
@@ -12,7 +16,9 @@ public sealed class UserService(
     TravelPaxDbContext dbContext,
     UserManager<AppUser> userManager,
     RoleManager<AppRole> roleManager,
-    ICurrentUserService currentUserService) : IUserService
+    ICurrentUserService currentUserService,
+    IEmailOutboxService emailOutboxService,
+    IConfiguration configuration) : IUserService
 {
     public async Task<UserListResponse> GetUsersAsync(string? search, string? status, int page, int pageSize, CancellationToken cancellationToken = default)
     {
@@ -77,6 +83,7 @@ public sealed class UserService(
     public async Task<UserDetailResponse> CreateUserAsync(CreateUserRequest request, CancellationToken cancellationToken = default)
     {
         var actorId = currentUserService.UserId;
+        var temporaryPassword = GenerateTemporaryPassword();
         var user = new AppUser
         {
             Id = Guid.NewGuid(),
@@ -101,7 +108,7 @@ public sealed class UserService(
             CreatedBy = actorId
         };
 
-        var result = await userManager.CreateAsync(user, request.Password);
+        var result = await userManager.CreateAsync(user, temporaryPassword);
         if (!result.Succeeded)
         {
             throw new InvalidOperationException(string.Join(", ", result.Errors.Select(x => x.Description)));
@@ -118,6 +125,18 @@ public sealed class UserService(
             NewValues = $"Email={user.Email};Status={user.Status};Roles={string.Join(',', request.RoleCodes)}"
         });
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        if (!string.IsNullOrWhiteSpace(user.Email))
+        {
+            var loginUrl = ResolveLoginUrl();
+            await emailOutboxService.QueueAsync(
+                [user.Email],
+                "TravelPax Workforce: Your account is ready",
+                BuildNewUserOnboardingText(user.DisplayName, user.Email, temporaryPassword, loginUrl),
+                BuildNewUserOnboardingHtml(user.DisplayName, user.Email, temporaryPassword, loginUrl),
+                actorId,
+                cancellationToken);
+        }
 
         return await GetUserAsync(user.Id, cancellationToken);
     }
@@ -508,6 +527,97 @@ public sealed class UserService(
         }
 
         await ApplyRolesAsync(user, roleCodes);
+    }
+
+    private string ResolveLoginUrl()
+    {
+        var configuredUrl = configuration["App:FrontendBaseUrl"]
+            ?? configuration["Frontend:BaseUrl"]
+            ?? configuration["FrontendBaseUrl"];
+
+        if (string.IsNullOrWhiteSpace(configuredUrl))
+        {
+            return "TravelPax Workforce portal";
+        }
+
+        return configuredUrl.TrimEnd('/');
+    }
+
+    private static string GenerateTemporaryPassword(int length = 12)
+    {
+        const string uppercase = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+        const string lowercase = "abcdefghijkmnopqrstuvwxyz";
+        const string digits = "23456789";
+        const string symbols = "@#$%&*!";
+        var all = uppercase + lowercase + digits + symbols;
+
+        var buffer = new List<char>(length)
+        {
+            uppercase[RandomNumberGenerator.GetInt32(uppercase.Length)],
+            lowercase[RandomNumberGenerator.GetInt32(lowercase.Length)],
+            digits[RandomNumberGenerator.GetInt32(digits.Length)],
+            symbols[RandomNumberGenerator.GetInt32(symbols.Length)],
+        };
+
+        while (buffer.Count < length)
+        {
+            buffer.Add(all[RandomNumberGenerator.GetInt32(all.Length)]);
+        }
+
+        for (var i = buffer.Count - 1; i > 0; i--)
+        {
+            var j = RandomNumberGenerator.GetInt32(i + 1);
+            (buffer[i], buffer[j]) = (buffer[j], buffer[i]);
+        }
+
+        return new string(buffer.ToArray());
+    }
+
+    private static string BuildNewUserOnboardingText(string displayName, string email, string temporaryPassword, string loginUrl)
+    {
+        return $@"Hello {displayName},
+
+Your TravelPax Workforce account has been created.
+
+Username: {email}
+Temporary Password: {temporaryPassword}
+Login URL: {loginUrl}
+
+Please keep this password secure. If you have trouble signing in, contact your HR administrator.";
+    }
+
+    private static string BuildNewUserOnboardingHtml(string displayName, string email, string temporaryPassword, string loginUrl)
+    {
+        var encodedName = WebUtility.HtmlEncode(displayName);
+        var encodedEmail = WebUtility.HtmlEncode(email);
+        var encodedPassword = WebUtility.HtmlEncode(temporaryPassword);
+        var encodedLoginUrl = WebUtility.HtmlEncode(loginUrl);
+        var loginUrlHtml = loginUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || loginUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+            ? $"""<a href="{encodedLoginUrl}">{encodedLoginUrl}</a>"""
+            : encodedLoginUrl;
+
+        return $@"<html>
+  <body style=""font-family:Segoe UI,Arial,sans-serif;color:#1f2937;line-height:1.55;"">
+    <h2 style=""margin:0 0 12px 0;color:#b8141a;"">Welcome to TravelPax Workforce</h2>
+    <p style=""margin:0 0 12px 0;"">Hello <strong>{encodedName}</strong>, your account is now ready.</p>
+    <table cellpadding=""8"" cellspacing=""0"" style=""border-collapse:collapse;margin:12px 0;border:1px solid #e5e7eb;"">
+      <tr>
+        <td style=""background:#f9fafb;border:1px solid #e5e7eb;""><strong>Username</strong></td>
+        <td style=""border:1px solid #e5e7eb;"">{encodedEmail}</td>
+      </tr>
+      <tr>
+        <td style=""background:#f9fafb;border:1px solid #e5e7eb;""><strong>Temporary Password</strong></td>
+        <td style=""border:1px solid #e5e7eb;""><code style=""font-size:14px;"">{encodedPassword}</code></td>
+      </tr>
+      <tr>
+        <td style=""background:#f9fafb;border:1px solid #e5e7eb;""><strong>Login URL</strong></td>
+        <td style=""border:1px solid #e5e7eb;"">{loginUrlHtml}</td>
+      </tr>
+    </table>
+    <p style=""margin:12px 0 0 0;"">Please keep this password secure. If you have trouble signing in, contact your HR administrator.</p>
+  </body>
+</html>";
     }
 
     private static string? NormalizeNullable(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

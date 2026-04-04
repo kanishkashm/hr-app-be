@@ -53,8 +53,7 @@ public sealed record CreateUserRequest(
     Guid? ReportingManagerId,
     Guid? BranchId,
     string Status,
-    IReadOnlyCollection<string> RoleCodes,
-    string Password);
+    IReadOnlyCollection<string> RoleCodes);
 
 public sealed record UpdateUserRequest(
     string FirstName,
