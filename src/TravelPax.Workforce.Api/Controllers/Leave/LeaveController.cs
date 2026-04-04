@@ -82,6 +82,46 @@ public sealed class LeaveController(ILeaveService leaveService) : ControllerBase
         }
     }
 
+    [HttpPatch("{requestId:guid}/review/hr")]
+    [Authorize(Policy = PermissionCodes.LeaveReviewHr)]
+    [ProducesResponseType(typeof(LeaveRequestResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ReviewRequestByHr(
+        Guid requestId,
+        [FromBody] LeaveRequestReviewRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await leaveService.ReviewRequestByHrAsync(requestId, request, cancellationToken);
+            return Ok(response);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+    }
+
+    [HttpPatch("{requestId:guid}/review/director")]
+    [Authorize(Policy = PermissionCodes.LeaveReviewDirector)]
+    [ProducesResponseType(typeof(LeaveRequestResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ReviewRequestByDirector(
+        Guid requestId,
+        [FromBody] LeaveRequestReviewRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await leaveService.ReviewRequestByDirectorAsync(requestId, request, cancellationToken);
+            return Ok(response);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+    }
+
     [HttpGet("balances")]
     [Authorize(Policy = PermissionCodes.LeaveView)]
     [ProducesResponseType(typeof(IReadOnlyCollection<LeaveBalanceResponse>), StatusCodes.Status200OK)]

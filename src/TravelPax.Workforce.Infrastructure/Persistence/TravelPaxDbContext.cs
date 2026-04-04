@@ -213,6 +213,8 @@ public sealed class TravelPaxDbContext(DbContextOptions<TravelPaxDbContext> opti
             entity.Property(x => x.Status).HasMaxLength(30);
             entity.Property(x => x.Reason).HasMaxLength(1000);
             entity.Property(x => x.ReviewerNote).HasMaxLength(1000);
+            entity.Property(x => x.HrReviewerNote).HasMaxLength(1000);
+            entity.Property(x => x.DirectorReviewerNote).HasMaxLength(1000);
             entity.Property(x => x.TotalDays).HasPrecision(5, 1);
             entity.HasOne(x => x.User)
                 .WithMany()
@@ -221,6 +223,14 @@ public sealed class TravelPaxDbContext(DbContextOptions<TravelPaxDbContext> opti
             entity.HasOne(x => x.ReviewedByUser)
                 .WithMany()
                 .HasForeignKey(x => x.ReviewedByUserId)
+                .OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(x => x.HrReviewedByUser)
+                .WithMany()
+                .HasForeignKey(x => x.HrReviewedByUserId)
+                .OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(x => x.DirectorReviewedByUser)
+                .WithMany()
+                .HasForeignKey(x => x.DirectorReviewedByUserId)
                 .OnDelete(DeleteBehavior.SetNull);
             entity.HasIndex(x => new { x.UserId, x.StartDate, x.EndDate });
         });

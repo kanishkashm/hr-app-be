@@ -28,7 +28,15 @@ public sealed record LeaveRequestResponse(
     Guid? ReviewedByUserId,
     string? ReviewedByName,
     DateTimeOffset? ReviewedAt,
-    string? ReviewerNote);
+    string? ReviewerNote,
+    Guid? HrReviewedByUserId,
+    string? HrReviewedByName,
+    DateTimeOffset? HrReviewedAt,
+    string? HrReviewerNote,
+    Guid? DirectorReviewedByUserId,
+    string? DirectorReviewedByName,
+    DateTimeOffset? DirectorReviewedAt,
+    string? DirectorReviewerNote);
 
 public sealed record LeaveRequestListResponse(
     IReadOnlyCollection<LeaveRequestResponse> Items,

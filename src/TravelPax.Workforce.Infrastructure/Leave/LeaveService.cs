@@ -18,6 +18,25 @@ public sealed class LeaveService(
     INotificationService notificationService,
     IEmailOutboxService emailOutboxService) : ILeaveService
 {
+    private const string LeaveStatusPending = "Pending";
+    private const string LeaveStatusHrApprovedPendingDirector = "HrApprovedPendingDirector";
+    private const string LeaveStatusDirectorApprovedPendingHr = "DirectorApprovedPendingHr";
+    private const string LeaveStatusApproved = "Approved";
+    private const string LeaveStatusRejected = "Rejected";
+    private static readonly string[] PendingStageStatuses =
+    [
+        LeaveStatusPending,
+        LeaveStatusHrApprovedPendingDirector,
+        LeaveStatusDirectorApprovedPendingHr
+    ];
+    private static readonly string[] ActiveOrInReviewStatuses =
+    [
+        LeaveStatusApproved,
+        LeaveStatusPending,
+        LeaveStatusHrApprovedPendingDirector,
+        LeaveStatusDirectorApprovedPendingHr
+    ];
+
     public async Task<LeaveRequestResponse> CreateMyRequestAsync(LeaveRequestCreateRequest request, CancellationToken cancellationToken = default)
     {
         var actor = await GetCurrentUserEntityAsync(cancellationToken);
@@ -52,7 +71,7 @@ public sealed class LeaveService(
 
         var hasOverlap = await dbContext.LeaveRequests.AnyAsync(
             x => x.UserId == actor.Id
-                 && (x.Status == "Pending" || x.Status == "Approved")
+                 && ActiveOrInReviewStatuses.Contains(x.Status)
                  && x.StartDate <= request.EndDate
                  && x.EndDate >= request.StartDate,
             cancellationToken);
@@ -80,7 +99,7 @@ public sealed class LeaveService(
             EndDate = request.EndDate,
             TotalDays = totalDays,
             Reason = request.Reason.Trim(),
-            Status = "Pending",
+            Status = LeaveStatusPending,
             CreatedBy = actor.Id,
             UpdatedBy = actor.Id
         };
@@ -110,6 +129,8 @@ public sealed class LeaveService(
         var items = await dbContext.LeaveRequests
             .Include(x => x.User)
             .Include(x => x.ReviewedByUser)
+            .Include(x => x.HrReviewedByUser)
+            .Include(x => x.DirectorReviewedByUser)
             .Where(x => x.UserId == actor.Id)
             .OrderByDescending(x => x.CreatedAt)
             .Take(Math.Clamp(take, 1, 120))
@@ -131,6 +152,8 @@ public sealed class LeaveService(
         var query = dbContext.LeaveRequests
             .Include(x => x.User)
             .Include(x => x.ReviewedByUser)
+            .Include(x => x.HrReviewedByUser)
+            .Include(x => x.DirectorReviewedByUser)
             .AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(status))
@@ -156,59 +179,139 @@ public sealed class LeaveService(
     public async Task<LeaveRequestResponse> ReviewRequestAsync(Guid requestId, LeaveRequestReviewRequest request, CancellationToken cancellationToken = default)
     {
         var actor = await GetCurrentUserEntityAsync(cancellationToken);
+        var permissions = await GetActorPermissionsAsync(actor.Id, cancellationToken);
+
+        if (permissions.Contains(PermissionCodes.LeaveReviewHr, StringComparer.OrdinalIgnoreCase))
+        {
+            return await ReviewInternalAsync(requestId, request, "HR", cancellationToken);
+        }
+
+        if (permissions.Contains(PermissionCodes.LeaveReviewDirector, StringComparer.OrdinalIgnoreCase))
+        {
+            return await ReviewInternalAsync(requestId, request, "DIRECTOR", cancellationToken);
+        }
+
+        throw new UnauthorizedAccessException("You do not have permission to review leave requests.");
+    }
+
+    public Task<LeaveRequestResponse> ReviewRequestByHrAsync(Guid requestId, LeaveRequestReviewRequest request, CancellationToken cancellationToken = default)
+        => ReviewInternalAsync(requestId, request, "HR", cancellationToken);
+
+    public Task<LeaveRequestResponse> ReviewRequestByDirectorAsync(Guid requestId, LeaveRequestReviewRequest request, CancellationToken cancellationToken = default)
+        => ReviewInternalAsync(requestId, request, "DIRECTOR", cancellationToken);
+
+    private async Task<LeaveRequestResponse> ReviewInternalAsync(
+        Guid requestId,
+        LeaveRequestReviewRequest request,
+        string stage,
+        CancellationToken cancellationToken)
+    {
+        var actor = await GetCurrentUserEntityAsync(cancellationToken);
         var entity = await dbContext.LeaveRequests
             .Include(x => x.User)
             .Include(x => x.ReviewedByUser)
+            .Include(x => x.HrReviewedByUser)
+            .Include(x => x.DirectorReviewedByUser)
             .FirstOrDefaultAsync(x => x.Id == requestId, cancellationToken)
             ?? throw new InvalidOperationException("Leave request not found.");
         await EnsureRangeNotFinalizedAsync(entity.StartDate, entity.EndDate, entity.User.BranchId, cancellationToken);
 
-        if (entity.Status != "Pending")
+        if (!IsReviewableStatus(entity.Status))
         {
             throw new InvalidOperationException("Only pending leave requests can be reviewed.");
         }
 
-        if (request.Approve)
+        if (stage == "HR" && entity.HrReviewedAt.HasValue)
         {
-            var balance = await EnsureLeaveBalanceAsync(entity.User, entity.LeaveType, entity.StartDate.Year, cancellationToken);
-            var pendingExcludingThis = await GetPendingDaysAsync(entity.UserId, entity.LeaveType, entity.StartDate.Year, entity.Id, cancellationToken);
-            var remainingBeforeApproval = balance.AllocatedDays + balance.CarryForwardDays + balance.ManualAdjustmentDays - balance.UsedDays - pendingExcludingThis;
-            if (entity.TotalDays > remainingBeforeApproval)
-            {
-                throw new InvalidOperationException($"Cannot approve. Remaining balance is {remainingBeforeApproval:0.0} day(s).");
-            }
-
-            balance.UsedDays += entity.TotalDays;
-            balance.UpdatedAt = DateTimeOffset.UtcNow;
-            balance.UpdatedBy = actor.Id;
+            throw new InvalidOperationException("HR review is already completed for this leave request.");
         }
 
-        entity.Status = request.Approve ? "Approved" : "Rejected";
-        entity.ReviewedByUserId = actor.Id;
-        entity.ReviewedAt = DateTimeOffset.UtcNow;
-        entity.ReviewerNote = string.IsNullOrWhiteSpace(request.ReviewerNote) ? null : request.ReviewerNote.Trim();
-        entity.UpdatedBy = actor.Id;
-        entity.UpdatedAt = DateTimeOffset.UtcNow;
+        if (stage == "DIRECTOR" && entity.DirectorReviewedAt.HasValue)
+        {
+            throw new InvalidOperationException("Director review is already completed for this leave request.");
+        }
+
+        var reviewNote = string.IsNullOrWhiteSpace(request.ReviewerNote) ? null : request.ReviewerNote.Trim();
+        var now = DateTimeOffset.UtcNow;
+
+        if (stage == "HR")
+        {
+            entity.HrReviewedByUserId = actor.Id;
+            entity.HrReviewedAt = now;
+            entity.HrReviewerNote = reviewNote;
+        }
+        else
+        {
+            entity.DirectorReviewedByUserId = actor.Id;
+            entity.DirectorReviewedAt = now;
+            entity.DirectorReviewerNote = reviewNote;
+        }
+
+        if (!request.Approve)
+        {
+            entity.Status = LeaveStatusRejected;
+            entity.ReviewedByUserId = actor.Id;
+            entity.ReviewedAt = now;
+            entity.ReviewerNote = reviewNote;
+            entity.UpdatedBy = actor.Id;
+            entity.UpdatedAt = now;
+        }
+        else
+        {
+            var hrApproved = entity.HrReviewedAt.HasValue;
+            var directorApproved = entity.DirectorReviewedAt.HasValue;
+
+            if (hrApproved && directorApproved)
+            {
+                var balance = await EnsureLeaveBalanceAsync(entity.User, entity.LeaveType, entity.StartDate.Year, cancellationToken);
+                var pendingExcludingThis = await GetPendingDaysAsync(entity.UserId, entity.LeaveType, entity.StartDate.Year, entity.Id, cancellationToken);
+                var remainingBeforeApproval = balance.AllocatedDays + balance.CarryForwardDays + balance.ManualAdjustmentDays - balance.UsedDays - pendingExcludingThis;
+                if (entity.TotalDays > remainingBeforeApproval)
+                {
+                    throw new InvalidOperationException($"Cannot approve. Remaining balance is {remainingBeforeApproval:0.0} day(s).");
+                }
+
+                balance.UsedDays += entity.TotalDays;
+                balance.UpdatedAt = now;
+                balance.UpdatedBy = actor.Id;
+                entity.Status = LeaveStatusApproved;
+                entity.ReviewedByUserId = actor.Id;
+                entity.ReviewedAt = now;
+                entity.ReviewerNote = reviewNote;
+            }
+            else
+            {
+                entity.Status = stage == "HR"
+                    ? LeaveStatusHrApprovedPendingDirector
+                    : LeaveStatusDirectorApprovedPendingHr;
+            }
+            entity.UpdatedBy = actor.Id;
+            entity.UpdatedAt = now;
+        }
 
         dbContext.AuditLogs.Add(new AuditLog
         {
             ActorUserId = actor.Id,
-            Action = request.Approve ? "LeaveApproved" : "LeaveRejected",
+            Action = request.Approve
+                ? (stage == "HR" ? "LeaveReviewedByHr" : "LeaveReviewedByDirector")
+                : (stage == "HR" ? "LeaveRejectedByHr" : "LeaveRejectedByDirector"),
             Module = "Leave",
             EntityName = nameof(LeaveRequest),
             EntityId = entity.Id.ToString(),
-            NewValues = $"Status={entity.Status};ReviewerNote={entity.ReviewerNote}",
+            NewValues = $"Stage={stage};Status={entity.Status};ReviewerNote={reviewNote}",
             IpAddress = GetIpAddress(),
             UserAgent = GetUserAgent()
         });
 
         await dbContext.SaveChangesAsync(cancellationToken);
         await dbContext.Entry(entity).Reference(x => x.ReviewedByUser).LoadAsync(cancellationToken);
+        await dbContext.Entry(entity).Reference(x => x.HrReviewedByUser).LoadAsync(cancellationToken);
+        await dbContext.Entry(entity).Reference(x => x.DirectorReviewedByUser).LoadAsync(cancellationToken);
         await notificationService.PublishToUsersAsync(
             [entity.UserId],
             "LeaveReview",
-            $"Leave request {entity.Status}",
-            $"Your {entity.LeaveType} leave request ({entity.StartDate:yyyy-MM-dd} to {entity.EndDate:yyyy-MM-dd}) was {entity.Status.ToLowerInvariant()}.",
+            request.Approve ? "Leave request reviewed" : "Leave request rejected",
+            BuildEmployeeReviewMessage(entity, stage, request.Approve),
             nameof(LeaveRequest),
             entity.Id.ToString(),
             actor.Id,
@@ -218,18 +321,24 @@ public sealed class LeaveService(
             await emailOutboxService.QueueAsync(
                 [entity.User.Email],
                 $"TravelPax Leave Request {entity.Status}",
-                $"Hello {entity.User.DisplayName}, your {entity.LeaveType} leave request from {entity.StartDate:yyyy-MM-dd} to {entity.EndDate:yyyy-MM-dd} was {entity.Status.ToLowerInvariant()}.",
+                $"Hello {entity.User.DisplayName}, {BuildEmployeeReviewMessage(entity, stage, request.Approve)}",
                 null,
                 actor.Id,
                 cancellationToken);
         }
+
+        if (request.Approve && entity.Status != LeaveStatusApproved)
+        {
+            await NotifyNextStageReviewerAsync(entity, stage, actor, cancellationToken);
+        }
+
         return Map(entity);
     }
 
     private async Task NotifyLeaveSubmittedAsync(LeaveRequest leaveRequest, AppUser actor, CancellationToken cancellationToken)
     {
         var roleIds = await dbContext.Roles
-            .Where(x => x.Name == RoleCodes.SuperAdmin || x.Name == RoleCodes.HrAdmin || x.Name == RoleCodes.OperationsManager)
+            .Where(x => x.Name == RoleCodes.SuperAdmin || x.Name == RoleCodes.HrAdmin || x.Name == RoleCodes.Director)
             .Select(x => x.Id)
             .ToListAsync(cancellationToken);
 
@@ -371,7 +480,7 @@ public sealed class LeaveService(
             .ToListAsync(cancellationToken);
 
         var pendingLookup = await dbContext.LeaveRequests
-            .Where(x => x.Status == "Pending" && x.StartDate.Year == targetYear && (userId == null || x.UserId == userId.Value))
+            .Where(x => PendingStageStatuses.Contains(x.Status) && x.StartDate.Year == targetYear && (userId == null || x.UserId == userId.Value))
             .GroupBy(x => new { x.UserId, x.LeaveType })
             .Select(x => new { x.Key.UserId, x.Key.LeaveType, PendingDays = x.Sum(y => y.TotalDays) })
             .ToListAsync(cancellationToken);
@@ -447,7 +556,7 @@ public sealed class LeaveService(
             .Where(x => x.UserId == userId
                         && x.LeaveType == leaveType
                         && x.StartDate.Year == year
-                        && x.Status == "Pending"
+                        && PendingStageStatuses.Contains(x.Status)
                         && (excludeRequestId == null || x.Id != excludeRequestId.Value))
             .SumAsync(x => (decimal?)x.TotalDays, cancellationToken) ?? 0m;
     }
@@ -682,7 +791,15 @@ public sealed class LeaveService(
             entity.ReviewedByUserId,
             entity.ReviewedByUser?.DisplayName,
             entity.ReviewedAt,
-            entity.ReviewerNote);
+            entity.ReviewerNote,
+            entity.HrReviewedByUserId,
+            entity.HrReviewedByUser?.DisplayName,
+            entity.HrReviewedAt,
+            entity.HrReviewerNote,
+            entity.DirectorReviewedByUserId,
+            entity.DirectorReviewedByUser?.DisplayName,
+            entity.DirectorReviewedAt,
+            entity.DirectorReviewerNote);
     }
 
     private static LeaveBalanceResponse MapBalance(LeaveBalance entity, decimal pendingDays)
@@ -714,5 +831,76 @@ public sealed class LeaveService(
             entity.AnnualAllocationDays,
             entity.MaxCarryForwardDays,
             entity.IsActive);
+    }
+
+    private static bool IsReviewableStatus(string status)
+        => status == LeaveStatusPending
+           || status == LeaveStatusHrApprovedPendingDirector
+           || status == LeaveStatusDirectorApprovedPendingHr;
+
+    private static string BuildEmployeeReviewMessage(LeaveRequest entity, string stage, bool approved)
+    {
+        if (!approved)
+        {
+            return $"Your {entity.LeaveType} leave request ({entity.StartDate:yyyy-MM-dd} to {entity.EndDate:yyyy-MM-dd}) was rejected by {stage}.";
+        }
+
+        if (entity.Status == LeaveStatusApproved)
+        {
+            return $"Your {entity.LeaveType} leave request ({entity.StartDate:yyyy-MM-dd} to {entity.EndDate:yyyy-MM-dd}) is fully approved.";
+        }
+
+        return $"Your {entity.LeaveType} leave request was approved by {stage} and is waiting for second-level approval.";
+    }
+
+    private async Task NotifyNextStageReviewerAsync(LeaveRequest leaveRequest, string approvedStage, AppUser actor, CancellationToken cancellationToken)
+    {
+        var pendingRole = approvedStage == "HR" ? RoleCodes.Director : RoleCodes.HrAdmin;
+        var roleIds = await dbContext.Roles
+            .Where(x => x.Name == pendingRole || x.Name == RoleCodes.SuperAdmin)
+            .Select(x => x.Id)
+            .ToListAsync(cancellationToken);
+
+        var reviewerIds = await dbContext.UserRoles
+            .Where(x => roleIds.Contains(x.RoleId))
+            .Select(x => x.UserId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        if (reviewerIds.Count == 0)
+        {
+            return;
+        }
+
+        var stageLabel = approvedStage == "HR" ? "Director" : "HR";
+        await notificationService.PublishToUsersAsync(
+            reviewerIds,
+            "LeaveApprovalPending",
+            $"Leave request awaiting {stageLabel} review",
+            $"{actor.DisplayName} completed {approvedStage} review for {leaveRequest.User.DisplayName}'s leave ({leaveRequest.StartDate:yyyy-MM-dd} to {leaveRequest.EndDate:yyyy-MM-dd}).",
+            nameof(LeaveRequest),
+            leaveRequest.Id.ToString(),
+            actor.Id,
+            cancellationToken);
+    }
+
+    private async Task<HashSet<string>> GetActorPermissionsAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        var rolePermissions = await (
+            from ur in dbContext.UserRoles
+            join rp in dbContext.RolePermissions on ur.RoleId equals rp.RoleId
+            join p in dbContext.Permissions on rp.PermissionId equals p.Id
+            where ur.UserId == userId
+            select p.Name)
+            .ToListAsync(cancellationToken);
+
+        var directPermissions = await (
+            from up in dbContext.UserPermissions
+            join p in dbContext.Permissions on up.PermissionId equals p.Id
+            where up.UserId == userId
+            select p.Name)
+            .ToListAsync(cancellationToken);
+
+        return rolePermissions.Concat(directPermissions).ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 }

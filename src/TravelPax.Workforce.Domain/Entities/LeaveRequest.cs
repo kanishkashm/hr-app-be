@@ -18,4 +18,14 @@ public sealed class LeaveRequest : BaseAuditableEntity
     public AppUser? ReviewedByUser { get; set; }
     public DateTimeOffset? ReviewedAt { get; set; }
     public string? ReviewerNote { get; set; }
+
+    public Guid? HrReviewedByUserId { get; set; }
+    public AppUser? HrReviewedByUser { get; set; }
+    public DateTimeOffset? HrReviewedAt { get; set; }
+    public string? HrReviewerNote { get; set; }
+
+    public Guid? DirectorReviewedByUserId { get; set; }
+    public AppUser? DirectorReviewedByUser { get; set; }
+    public DateTimeOffset? DirectorReviewedAt { get; set; }
+    public string? DirectorReviewerNote { get; set; }
 }

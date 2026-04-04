@@ -15,6 +15,8 @@ public static class PermissionCodes
     public const string LeaveRequest = "leave.request";
     public const string LeaveView = "leave.view";
     public const string LeaveManage = "leave.manage";
+    public const string LeaveReviewHr = "leave.review.hr";
+    public const string LeaveReviewDirector = "leave.review.director";
     public const string ShiftsView = "shifts.view";
     public const string ShiftsManage = "shifts.manage";
     public const string SettingsManage = "settings.manage";
@@ -35,6 +37,8 @@ public static class PermissionCodes
         LeaveRequest,
         LeaveView,
         LeaveManage,
+        LeaveReviewHr,
+        LeaveReviewDirector,
         ShiftsView,
         ShiftsManage,
         SettingsManage,

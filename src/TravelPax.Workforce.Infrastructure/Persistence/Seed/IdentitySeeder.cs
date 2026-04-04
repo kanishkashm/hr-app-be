@@ -125,6 +125,7 @@ public sealed class IdentitySeeder(
                 PermissionCodes.LeaveRequest,
                 PermissionCodes.LeaveView,
                 PermissionCodes.LeaveManage,
+                PermissionCodes.LeaveReviewHr,
                 PermissionCodes.ShiftsView,
                 PermissionCodes.ShiftsManage,
                 PermissionCodes.UsersView,
@@ -133,6 +134,14 @@ public sealed class IdentitySeeder(
                 PermissionCodes.RolesView,
                 PermissionCodes.AuditView,
                 PermissionCodes.SettingsManage
+            ],
+            [RoleCodes.Director] =
+            [
+                PermissionCodes.LeaveRequest,
+                PermissionCodes.LeaveView,
+                PermissionCodes.LeaveReviewDirector,
+                PermissionCodes.ReportsView,
+                PermissionCodes.AuditView
             ],
             [RoleCodes.OperationsManager] = [PermissionCodes.AttendanceView, PermissionCodes.AttendanceManage, PermissionCodes.ReportsView, PermissionCodes.LeaveRequest, PermissionCodes.LeaveView, PermissionCodes.ShiftsView],
             [RoleCodes.TeamLead] = [PermissionCodes.AttendanceView, PermissionCodes.ReportsView, PermissionCodes.LeaveRequest, PermissionCodes.LeaveView, PermissionCodes.ShiftsView],
