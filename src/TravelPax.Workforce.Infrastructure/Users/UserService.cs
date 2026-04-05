@@ -459,6 +459,35 @@ public sealed class UserService(
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<UserAvailabilityResponse> CheckAvailabilityAsync(
+        string? email,
+        string? employeeId,
+        Guid? excludeUserId,
+        CancellationToken cancellationToken = default)
+    {
+        var query = dbContext.Users.AsQueryable();
+        if (excludeUserId.HasValue)
+        {
+            query = query.Where(x => x.Id != excludeUserId.Value);
+        }
+
+        var emailExists = false;
+        if (!string.IsNullOrWhiteSpace(email))
+        {
+            var normalizedEmail = email.Trim().ToUpperInvariant();
+            emailExists = await query.AnyAsync(x => x.NormalizedEmail == normalizedEmail, cancellationToken);
+        }
+
+        var employeeIdExists = false;
+        if (!string.IsNullOrWhiteSpace(employeeId))
+        {
+            var normalizedEmployeeId = employeeId.Trim().ToUpperInvariant();
+            employeeIdExists = await query.AnyAsync(x => x.EmployeeId.ToUpper() == normalizedEmployeeId, cancellationToken);
+        }
+
+        return new UserAvailabilityResponse(emailExists, employeeIdExists);
+    }
+
     private async Task<UserDetailResponse> MapDetailAsync(AppUser user)
     {
         var roles = await userManager.GetRolesAsync(user);

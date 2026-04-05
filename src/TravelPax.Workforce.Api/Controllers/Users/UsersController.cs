@@ -37,19 +37,35 @@ public sealed class UsersController(IUserService userService) : ControllerBase
     [HttpPost]
     [Authorize(Policy = PermissionCodes.UsersCreate)]
     [ProducesResponseType(typeof(UserDetailResponse), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> CreateUser([FromBody] CreateUserRequest request, CancellationToken cancellationToken)
     {
-        var response = await userService.CreateUserAsync(request, cancellationToken);
-        return CreatedAtAction(nameof(GetUser), new { userId = response.Id }, response);
+        try
+        {
+            var response = await userService.CreateUserAsync(request, cancellationToken);
+            return CreatedAtAction(nameof(GetUser), new { userId = response.Id }, response);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
     }
 
     [HttpPut("{userId:guid}")]
     [Authorize(Policy = PermissionCodes.UsersEdit)]
     [ProducesResponseType(typeof(UserDetailResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> UpdateUser(Guid userId, [FromBody] UpdateUserRequest request, CancellationToken cancellationToken)
     {
-        var response = await userService.UpdateUserAsync(userId, request, cancellationToken);
-        return Ok(response);
+        try
+        {
+            var response = await userService.UpdateUserAsync(userId, request, cancellationToken);
+            return Ok(response);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
     }
 
     [HttpPatch("{userId:guid}/status")]
@@ -155,6 +171,19 @@ public sealed class UsersController(IUserService userService) : ControllerBase
     public async Task<IActionResult> GetBranches(CancellationToken cancellationToken)
     {
         var response = await userService.GetBranchOptionsAsync(cancellationToken);
+        return Ok(response);
+    }
+
+    [HttpGet("availability")]
+    [Authorize(Policy = PermissionCodes.UsersView)]
+    [ProducesResponseType(typeof(UserAvailabilityResponse), StatusCodes.Status200OK)]
+    public async Task<IActionResult> CheckAvailability(
+        [FromQuery] string? email,
+        [FromQuery] string? employeeId,
+        [FromQuery] Guid? excludeUserId,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await userService.CheckAvailabilityAsync(email, employeeId, excludeUserId, cancellationToken);
         return Ok(response);
     }
 }

@@ -18,4 +18,5 @@ public interface IUserService
     Task<ProfileUpdateRequestResponse> ReviewProfileUpdateRequestAsync(Guid requestId, ReviewProfileUpdateRequest request, CancellationToken cancellationToken = default);
     Task<IReadOnlyCollection<RoleOptionResponse>> GetRoleOptionsAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyCollection<BranchOptionResponse>> GetBranchOptionsAsync(CancellationToken cancellationToken = default);
+    Task<UserAvailabilityResponse> CheckAvailabilityAsync(string? email, string? employeeId, Guid? excludeUserId, CancellationToken cancellationToken = default);
 }

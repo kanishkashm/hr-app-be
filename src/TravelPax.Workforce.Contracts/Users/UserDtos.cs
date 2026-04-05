@@ -120,3 +120,7 @@ public sealed record ReviewProfileUpdateRequest(
 public sealed record RoleOptionResponse(string Code, string Name);
 
 public sealed record BranchOptionResponse(Guid Id, string Code, string Name);
+
+public sealed record UserAvailabilityResponse(
+    bool EmailExists,
+    bool EmployeeIdExists);
