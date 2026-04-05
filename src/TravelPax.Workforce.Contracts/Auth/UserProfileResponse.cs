@@ -8,5 +8,6 @@ public sealed record UserProfileResponse(
     string Department,
     string Designation,
     string Branch,
+    bool MustChangePassword,
     IReadOnlyCollection<string> Roles,
     IReadOnlyCollection<string> Permissions);

@@ -120,6 +120,40 @@ public sealed class AuthService(
         return MapProfile(user, roles, permissions);
     }
 
+    public async Task ChangePasswordAsync(ChangePasswordRequest request, CancellationToken cancellationToken = default)
+    {
+        if (!currentUserService.IsAuthenticated || currentUserService.UserId is null)
+        {
+            throw new UnauthorizedAccessException("User is not authenticated.");
+        }
+
+        var user = await userManager.Users
+            .FirstOrDefaultAsync(x => x.Id == currentUserService.UserId.Value, cancellationToken)
+            ?? throw new UnauthorizedAccessException("User not found.");
+
+        var result = await userManager.ChangePasswordAsync(user, request.CurrentPassword, request.NewPassword);
+        if (!result.Succeeded)
+        {
+            throw new InvalidOperationException(string.Join(", ", result.Errors.Select(x => x.Description)));
+        }
+
+        user.MustChangePassword = false;
+        user.UpdatedAt = DateTimeOffset.UtcNow;
+        user.UpdatedBy = user.Id;
+
+        dbContext.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = user.Id,
+            Action = "PasswordChanged",
+            Module = "Authentication",
+            EntityName = nameof(AppUser),
+            EntityId = user.Id.ToString(),
+            NewValues = "Password changed by user"
+        });
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task LogoutAsync(string? refreshToken, CancellationToken cancellationToken = default)
     {
         if (!string.IsNullOrWhiteSpace(refreshToken))
@@ -210,6 +244,7 @@ public sealed class AuthService(
             user.Department ?? string.Empty,
             user.Designation ?? string.Empty,
             user.Branch?.Name ?? string.Empty,
+            user.MustChangePassword,
             roles.ToArray(),
             permissions);
     }

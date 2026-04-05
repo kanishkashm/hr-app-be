@@ -105,6 +105,7 @@ public sealed class UserService(
             Status = request.Status,
             EmailConfirmed = true,
             LockoutEnabled = true,
+            MustChangePassword = true,
             CreatedBy = actorId
         };
 
@@ -224,6 +225,10 @@ public sealed class UserService(
         {
             throw new InvalidOperationException(string.Join(", ", result.Errors.Select(x => x.Description)));
         }
+
+        user.MustChangePassword = true;
+        user.UpdatedAt = DateTimeOffset.UtcNow;
+        user.UpdatedBy = currentUserService.UserId;
 
         dbContext.AuditLogs.Add(new AuditLog
         {

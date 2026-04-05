@@ -21,6 +21,7 @@ public sealed class AppUser : IdentityUser<Guid>
     public string? ProfilePhotoUrl { get; set; }
     public string? EmergencyContactName { get; set; }
     public string? EmergencyContactPhone { get; set; }
+    public bool MustChangePassword { get; set; }
     public DateTimeOffset? LastLoginAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public Guid? CreatedBy { get; set; }
