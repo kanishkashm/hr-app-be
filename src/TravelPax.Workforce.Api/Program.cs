@@ -73,8 +73,11 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.Logger.LogInformation("Starting TravelPax Workforce API (environment: {Environment})", app.Environment.EnvironmentName);
+app.Logger.LogInformation("SkipStartupInitialization is set to {SkipStartupInitialization}", skipStartupInitialization);
 if (!skipStartupInitialization)
 {
+    app.Logger.LogInformation("Applying database migrations and seeding initial data...");
     using var scope = app.Services.CreateScope();
     var dbContext = scope.ServiceProvider.GetRequiredService<TravelPaxDbContext>();
     var connectionString = dbContext.Database.GetConnectionString() ?? string.Empty;
