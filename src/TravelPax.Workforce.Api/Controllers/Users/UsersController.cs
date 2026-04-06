@@ -80,10 +80,18 @@ public sealed class UsersController(IUserService userService) : ControllerBase
     [HttpPost("{userId:guid}/reset-password")]
     [Authorize(Policy = PermissionCodes.UsersEdit)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
-    public async Task<IActionResult> ResetPassword(Guid userId, [FromBody] ResetPasswordRequest request, CancellationToken cancellationToken)
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ResetPassword(Guid userId, CancellationToken cancellationToken)
     {
-        await userService.ResetPasswordAsync(userId, request, cancellationToken);
-        return NoContent();
+        try
+        {
+            await userService.ResetPasswordAsync(userId, cancellationToken);
+            return NoContent();
+        }
+        catch (InvalidOperationException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
     }
 
     [HttpGet("me/profile")]

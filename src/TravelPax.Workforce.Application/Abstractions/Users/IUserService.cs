@@ -9,7 +9,7 @@ public interface IUserService
     Task<UserDetailResponse> CreateUserAsync(CreateUserRequest request, CancellationToken cancellationToken = default);
     Task<UserDetailResponse> UpdateUserAsync(Guid userId, UpdateUserRequest request, CancellationToken cancellationToken = default);
     Task<UserDetailResponse> UpdateUserStatusAsync(Guid userId, UpdateUserStatusRequest request, CancellationToken cancellationToken = default);
-    Task ResetPasswordAsync(Guid userId, ResetPasswordRequest request, CancellationToken cancellationToken = default);
+    Task ResetPasswordAsync(Guid userId, CancellationToken cancellationToken = default);
     Task<UserDetailResponse> GetMyProfileAsync(CancellationToken cancellationToken = default);
     Task<UserDetailResponse> UpdateMyProfileAsync(UpdateMyProfileRequest request, CancellationToken cancellationToken = default);
     Task<ProfileUpdateRequestResponse> SubmitMyProfileUpdateRequestAsync(CreateMyProfileUpdateRequest request, CancellationToken cancellationToken = default);

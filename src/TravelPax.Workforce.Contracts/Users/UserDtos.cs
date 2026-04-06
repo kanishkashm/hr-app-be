@@ -56,6 +56,7 @@ public sealed record CreateUserRequest(
     IReadOnlyCollection<string> RoleCodes);
 
 public sealed record UpdateUserRequest(
+    string EmployeeId,
     string FirstName,
     string LastName,
     string DisplayName,
@@ -72,7 +73,7 @@ public sealed record UpdateUserRequest(
 
 public sealed record UpdateUserStatusRequest(string Status);
 
-public sealed record ResetPasswordRequest(string NewPassword);
+public sealed record ResetPasswordRequest();
 
 public sealed record UpdateMyProfileRequest(
     string DisplayName,

@@ -147,8 +147,25 @@ public sealed class UserService(
         var user = await dbContext.Users.Include(x => x.Branch).FirstOrDefaultAsync(x => x.Id == userId, cancellationToken)
             ?? throw new InvalidOperationException("User not found.");
 
+        var normalizedEmployeeId = request.EmployeeId.Trim().ToUpperInvariant();
+        var employeeIdTaken = await dbContext.Users
+            .AnyAsync(x => x.Id != userId && x.EmployeeId.ToUpper() == normalizedEmployeeId, cancellationToken);
+        if (employeeIdTaken)
+        {
+            throw new InvalidOperationException($"Employee ID '{request.EmployeeId}' is already taken.");
+        }
+
+        var normalizedEmail = request.Email.Trim().ToUpperInvariant();
+        var emailTaken = await dbContext.Users
+            .AnyAsync(x => x.Id != userId && x.NormalizedEmail == normalizedEmail, cancellationToken);
+        if (emailTaken)
+        {
+            throw new InvalidOperationException($"Email '{request.Email}' is already taken.");
+        }
+
         var oldValues = $"Email={user.Email};Status={user.Status};Department={user.Department};Designation={user.Designation}";
 
+        user.EmployeeId = request.EmployeeId.Trim();
         user.FirstName = request.FirstName.Trim();
         user.LastName = request.LastName.Trim();
         user.DisplayName = request.DisplayName.Trim();
@@ -214,13 +231,15 @@ public sealed class UserService(
         return await GetUserAsync(user.Id, cancellationToken);
     }
 
-    public async Task ResetPasswordAsync(Guid userId, ResetPasswordRequest request, CancellationToken cancellationToken = default)
+    public async Task ResetPasswordAsync(Guid userId, CancellationToken cancellationToken = default)
     {
         var user = await dbContext.Users.FirstOrDefaultAsync(x => x.Id == userId, cancellationToken)
             ?? throw new InvalidOperationException("User not found.");
 
+        var temporaryPassword = GenerateTemporaryPassword();
+
         var resetToken = await userManager.GeneratePasswordResetTokenAsync(user);
-        var result = await userManager.ResetPasswordAsync(user, resetToken, request.NewPassword);
+        var result = await userManager.ResetPasswordAsync(user, resetToken, temporaryPassword);
         if (!result.Succeeded)
         {
             throw new InvalidOperationException(string.Join(", ", result.Errors.Select(x => x.Description)));
@@ -237,9 +256,21 @@ public sealed class UserService(
             Module = "Users",
             EntityName = nameof(AppUser),
             EntityId = user.Id.ToString(),
-            NewValues = "Password reset by admin"
+            NewValues = "Temporary password reset by admin; user must change at next login"
         });
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        if (!string.IsNullOrWhiteSpace(user.Email))
+        {
+            var loginUrl = ResolveLoginUrl();
+            await emailOutboxService.QueueAsync(
+                [user.Email],
+                "TravelPax Workforce: Your temporary password",
+                BuildResetPasswordText(user.DisplayName, user.Email, temporaryPassword, loginUrl),
+                BuildResetPasswordHtml(user.DisplayName, user.Email, temporaryPassword, loginUrl),
+                currentUserService.UserId,
+                cancellationToken);
+        }
     }
 
     public async Task<UserDetailResponse> GetMyProfileAsync(CancellationToken cancellationToken = default)
@@ -650,6 +681,53 @@ Please keep this password secure. If you have trouble signing in, contact your H
       </tr>
     </table>
     <p style=""margin:12px 0 0 0;"">Please keep this password secure. If you have trouble signing in, contact your HR administrator.</p>
+  </body>
+</html>";
+    }
+
+    private static string BuildResetPasswordText(string displayName, string email, string temporaryPassword, string loginUrl)
+    {
+        return $@"Hello {displayName},
+
+Your TravelPax Workforce password was reset by an administrator.
+
+Username: {email}
+Temporary Password: {temporaryPassword}
+Login URL: {loginUrl}
+
+You must change this temporary password when you log in.";
+    }
+
+    private static string BuildResetPasswordHtml(string displayName, string email, string temporaryPassword, string loginUrl)
+    {
+        var encodedName = WebUtility.HtmlEncode(displayName);
+        var encodedEmail = WebUtility.HtmlEncode(email);
+        var encodedPassword = WebUtility.HtmlEncode(temporaryPassword);
+        var encodedLoginUrl = WebUtility.HtmlEncode(loginUrl);
+        var loginUrlHtml = loginUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || loginUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+            ? $"""<a href="{encodedLoginUrl}">{encodedLoginUrl}</a>"""
+            : encodedLoginUrl;
+
+        return $@"<html>
+  <body style=""font-family:Segoe UI,Arial,sans-serif;color:#1f2937;line-height:1.55;"">
+    <h2 style=""margin:0 0 12px 0;color:#b8141a;"">TravelPax Workforce Password Reset</h2>
+    <p style=""margin:0 0 12px 0;"">Hello <strong>{encodedName}</strong>, your password has been reset by an administrator.</p>
+    <table cellpadding=""8"" cellspacing=""0"" style=""border-collapse:collapse;margin:12px 0;border:1px solid #e5e7eb;"">
+      <tr>
+        <td style=""background:#f9fafb;border:1px solid #e5e7eb;""><strong>Username</strong></td>
+        <td style=""border:1px solid #e5e7eb;"">{encodedEmail}</td>
+      </tr>
+      <tr>
+        <td style=""background:#f9fafb;border:1px solid #e5e7eb;""><strong>Temporary Password</strong></td>
+        <td style=""border:1px solid #e5e7eb;""><code style=""font-size:14px;"">{encodedPassword}</code></td>
+      </tr>
+      <tr>
+        <td style=""background:#f9fafb;border:1px solid #e5e7eb;""><strong>Login URL</strong></td>
+        <td style=""border:1px solid #e5e7eb;"">{loginUrlHtml}</td>
+      </tr>
+    </table>
+    <p style=""margin:12px 0 0 0;"">You must change this temporary password at next login.</p>
   </body>
 </html>";
     }
